@@ -924,12 +924,12 @@ void govrh_CUR_set_color_key(int enable,int alpha,unsigned int colkey)
 void govrh_CUR_set_colfmt(vdo_color_fmt colfmt)
 {
 	colfmt = (colfmt < VDO_COL_FMT_ARGB)? VDO_COL_FMT_YUV444:VDO_COL_FMT_ARGB;
-	DPRINT("[CUR] set colfmt %s\n",vpp_colfmt_str[colfmt]);
+//	DPRINT("[CUR] set colfmt %s\n",vpp_colfmt_str[colfmt]);
 	if( p_cursor->fb_p->fb.col_fmt == colfmt )
 		return;
 
 	vppif_reg32_out(REG_GOVRH_CUR_ADDR,(p_cursor->colfmt==colfmt)? p_cursor->cursor_addr1:p_cursor->cursor_addr2);
-	DPRINT("[CUR] %s --> %s chg fb %d\n",vpp_colfmt_str[p_cursor->fb_p->fb.col_fmt],vpp_colfmt_str[colfmt],(p_cursor->colfmt==colfmt)?1:2);
+//	DPRINT("[CUR] %s --> %s chg fb %d\n",vpp_colfmt_str[p_cursor->fb_p->fb.col_fmt],vpp_colfmt_str[colfmt],(p_cursor->colfmt==colfmt)?1:2);
 	p_cursor->fb_p->fb.col_fmt = colfmt;	
 }
 
@@ -1010,7 +1010,7 @@ void govrh_CUR_proc_view(int read,vdo_view_t *view)
 
 void govrh_CUR_set_framebuffer(vdo_framebuf_t *fb)
 {
-	DPRINT("[CUR] govrh_CUR_set_framebuffer\n");
+//	DPRINT("[CUR] govrh_CUR_set_framebuffer\n");
 
 	vppif_reg32_out(REG_GOVRH_CUR_ADDR,fb->y_addr);
 	vppif_reg32_write(GOVRH_CUR_WIDTH,fb->img_w);
