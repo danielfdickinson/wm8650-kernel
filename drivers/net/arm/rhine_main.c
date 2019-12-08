@@ -682,7 +682,7 @@ rhine_found1(struct pci_dev *pcid, const struct pci_device_id *ent)
 	extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
 	if(wmt_getsyspara(eth_env_name,eth_env_val,&varlen) == 0) {
 		sscanf(eth_env_val,"%X",&eth);
-		if(!(eth & 0x10)) {
+		if (eth != 0x10 && eth != 0x01){
 			printk("Configure VIA Rhine driver disabled \n");
 			return -ENODEV;
 		}
