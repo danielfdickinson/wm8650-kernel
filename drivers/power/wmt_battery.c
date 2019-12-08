@@ -174,7 +174,7 @@ static void	spi_ini(void)
 			spi_mode = 1;
 		}
     }else{
-			spi_mode = 1;
+			spi_mode = 0;
 	}
 
 	/*printk("Bow: spi_mode =%d,tsused=%d, is_cs7146 = 0x%x  \n",spi_mode,tsused,is_cs7146);*/
@@ -338,12 +338,14 @@ static int __init wmt_batt_init(void)
 	char buf[128];
 	char varname[] = "wmt.io.bat";
 	int varlen = 128;
+	int wmt_adc;
 
-	printk("Bow: wmt_batt_init  \n");
+	/*printk("Bow: wmt_batt_init  \n");*/
 
 	if (wmt_getsyspara(varname, buf, &varlen) == 0){
-		sscanf(buf,"%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x",
+		sscanf(buf,"%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x:%x",
 			    &wmt_operation,
+				&wmt_adc,
 			    &batt_update_time,
 			    &batt_charge_max,
 			    &batt_charge_min,
@@ -369,6 +371,10 @@ static int __init wmt_batt_init(void)
 			case 2: /* for MID */
 				batt_operation = 1;
 				ADC_USED= 1;
+				break;
+			case 3: /* WMT8650 netbook & maybe also for tablets */
+				batt_operation = 1;
+				ADC_USED= wmt_adc;
 				break;
 			default:
 				batt_operation = 1;
@@ -515,7 +521,7 @@ static unsigned short hx_batt_read(void)
 		spi_write_and_read_data(spi_user_rec_b, wbuf, rbuf, 3);
 		spi_buf = (rbuf[1] << 5) | (rbuf[2] >> 3);
 	}else{
-		spi_buf = wmt_read_batstatus_if();
+		spi_buf = 0;
 	}
     /*printk("spi_buf = 0x%x \n ",spi_buf);*/
 	return spi_buf;
@@ -1021,7 +1027,7 @@ static int __devinit wmt_battery_probe(struct platform_device *dev)
 
      /*************     AC     ************/
 	
-	printk("Bow: Probe...0\n");
+	/*printk("Bow: Probe...0\n");*/
 	ret = power_supply_register(&dev->dev, &ac_ps);
 	if (!ret)
 		schedule_work(&ac_work);
