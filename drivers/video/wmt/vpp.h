@@ -825,7 +825,7 @@ EXTERN void vpp_calculate_clock(vpp_base_clock_t *clk,unsigned int div_max,unsig
 EXTERN void vpp_govw_dynamic_tg_set_rcyc(int rcyc);
 EXTERN void vpp_govw_dynamic_tg(int err);
 EXTERN void vpp_set_vppm_int_enable(vpp_int_t int_bit,int enable);
-EXTERN __inline__ void vpp_cache_sync(void);
+EXTERN void vpp_cache_sync(void);
 
 #ifdef __KERNEL__
 /* dev-vpp.c */

@@ -42,7 +42,7 @@ unsigned int vpp_get_chipid(void)
 	return REG32_VAL(SYSTEM_CFG_CTRL_BASE_ADDR);
 }
 
-__inline__ void vpp_cache_sync(void)
+void vpp_cache_sync(void)
 {
 	/*
 	* MRC{cond} p<cpnum>, <op1>, Rd, CRn, CRm, <op2>
