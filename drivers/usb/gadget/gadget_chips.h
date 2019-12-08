@@ -21,6 +21,12 @@
 #define	gadget_is_net2280(g)	0
 #endif
 
+#ifdef CONFIG_USB_GADGET_WMT
+#define	gadget_is_wmt(g)	!strcmp("wmotgdev", (g)->name)
+#else
+#define	gadget_is_wmt(g)	0
+#endif
+
 #ifdef CONFIG_USB_GADGET_AMD5536UDC
 #define	gadget_is_amd5536udc(g)	!strcmp("amd5536udc", (g)->name)
 #else
@@ -247,6 +253,8 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x24;
 	else if (gadget_is_r8a66597(gadget))
 		return 0x25;
+	else if (gadget_is_wmt(gadget))
+		return 0x26;
 	return -ENOENT;
 }
 
