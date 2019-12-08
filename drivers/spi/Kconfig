@@ -243,6 +243,17 @@ config SPI_XILINX
 
 	  See the "OPB Serial Peripheral Interface (SPI) (v1.00e)"
 	  Product Specification document (DS464) for hardware details.
+# WonderMedia SPI driver
+config VT34XX_SPI_SUPPORT
+	tristate "WonderMedia VT34xx(WM8425) SPI Bus Support(Proprietary)"
+	default n
+	depends on ARCH_WMT
+	    help
+	      If you say yes here you get support for the WMT chip.
+	      This is proprietary driver for WMT
+
+	      This driver can also be built as a module.  If so, the module
+	      will be called vt34xx_spi.ko
 
 #
 # Add new SPI master controllers in alphabetical order above this line
@@ -281,3 +292,17 @@ endif # SPI_MASTER
 # (slave support would go here)
 
 endif # SPI
+
+menu "WMT Spi Support"
+
+config WMT_SPI_SUPPORT
+    tristate "WonderMedia SPI Support(Proprietary)"
+    default y
+	help
+	  If you say yes here you get support for the WMT chip.
+	  This is proprietary driver for WMT
+	  
+	  This driver can also be built as a module.  If so, the module
+	  will be called wmt-spi.
+	  
+endmenu

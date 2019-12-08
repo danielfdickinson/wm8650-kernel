@@ -24,10 +24,19 @@
 
 #define cls_dev_to_mmc_host(d)	container_of(d, struct mmc_host, class_dev)
 
+#if 0
+#define DBG(x...)	printk(KERN_ALERT x)
+#else
+#define DBG(x...)	do { } while (0)
+#endif
+
 static void mmc_host_classdev_release(struct device *dev)
 {
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
-	kfree(host);
+
+    DBG("[%s] s\n",__func__);
+    kfree(host);
+	DBG("[%s] e\n",__func__);
 }
 
 static struct class mmc_host_class = {
@@ -37,12 +46,15 @@ static struct class mmc_host_class = {
 
 int mmc_register_host_class(void)
 {
+	DBG("[%s] \n",__func__);
 	return class_register(&mmc_host_class);
 }
 
 void mmc_unregister_host_class(void)
 {
+	DBG("[%s] s\n",__func__);
 	class_unregister(&mmc_host_class);
+	DBG("[%s] e\n",__func__);
 }
 
 static DEFINE_IDR(mmc_host_idr);
@@ -59,13 +71,18 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 {
 	int err;
 	struct mmc_host *host;
-
-	if (!idr_pre_get(&mmc_host_idr, GFP_KERNEL))
+	DBG("[%s] s\n",__func__);
+	
+	if (!idr_pre_get(&mmc_host_idr, GFP_KERNEL)) {
+		DBG("[%s] e1\n",__func__);
 		return NULL;
+	}
 
 	host = kzalloc(sizeof(struct mmc_host) + extra, GFP_KERNEL);
-	if (!host)
+	if (!host) {
+		DBG("[%s] e2\n",__func__);
 		return NULL;
+	}
 
 	spin_lock(&mmc_host_lock);
 	err = idr_get_new(&mmc_host_idr, host, &host->index);
@@ -97,10 +114,12 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	host->max_blk_size = 512;
 	host->max_blk_count = PAGE_CACHE_SIZE / 512;
 
+	DBG("[%s] e3\n",__func__);
 	return host;
 
 free:
 	kfree(host);
+	DBG("[%s] e4\n",__func__);
 	return NULL;
 }
 
@@ -117,15 +136,18 @@ EXPORT_SYMBOL(mmc_alloc_host);
 int mmc_add_host(struct mmc_host *host)
 {
 	int err;
-
+	DBG("[%s] s\n",__func__);
+	
 	WARN_ON((host->caps & MMC_CAP_SDIO_IRQ) &&
 		!host->ops->enable_sdio_irq);
 
 	led_trigger_register_simple(dev_name(&host->class_dev), &host->led);
 
 	err = device_add(&host->class_dev);
-	if (err)
+	if (err) {
+		DBG("[%s] e1\n",__func__);
 		return err;
+	}
 
 #ifdef CONFIG_DEBUG_FS
 	mmc_add_host_debugfs(host);
@@ -133,6 +155,7 @@ int mmc_add_host(struct mmc_host *host)
 
 	mmc_start_host(host);
 
+	DBG("[%s] e2\n",__func__);
 	return 0;
 }
 
@@ -148,6 +171,7 @@ EXPORT_SYMBOL(mmc_add_host);
  */
 void mmc_remove_host(struct mmc_host *host)
 {
+	DBG("[%s] s\n",__func__);
 	mmc_stop_host(host);
 
 #ifdef CONFIG_DEBUG_FS
@@ -157,6 +181,7 @@ void mmc_remove_host(struct mmc_host *host)
 	device_del(&host->class_dev);
 
 	led_trigger_unregister_simple(host->led);
+	DBG("[%s] e\n",__func__);
 }
 
 EXPORT_SYMBOL(mmc_remove_host);
@@ -169,11 +194,13 @@ EXPORT_SYMBOL(mmc_remove_host);
  */
 void mmc_free_host(struct mmc_host *host)
 {
+	DBG("[%s] s\n",__func__);
 	spin_lock(&mmc_host_lock);
 	idr_remove(&mmc_host_idr, host->index);
 	spin_unlock(&mmc_host_lock);
 
 	put_device(&host->class_dev);
+	DBG("[%s] e\n",__func__);
 }
 
 EXPORT_SYMBOL(mmc_free_host);

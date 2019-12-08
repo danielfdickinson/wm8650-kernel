@@ -18,6 +18,13 @@
 #include "core.h"
 #include "mmc_ops.h"
 
+
+#if 0
+#define DBG(x...)	printk(KERN_WARNING x)
+#else
+#define DBG(x...)	do { } while (0)
+#endif
+
 /* The debugfs functions are optimized away when CONFIG_DEBUG_FS isn't set. */
 static int mmc_ios_show(struct seq_file *s, void *data)
 {
@@ -44,6 +51,8 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 	struct mmc_ios	*ios = &host->ios;
 	const char *str;
 
+	DBG("[%s] s\n",__func__);
+	
 	seq_printf(s, "clock:\t\t%u Hz\n", ios->clock);
 	seq_printf(s, "vdd:\t\t%u ", ios->vdd);
 	if ((1 << ios->vdd) & MMC_VDD_165_195)
@@ -118,12 +127,18 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 	}
 	seq_printf(s, "timing spec:\t%u (%s)\n", ios->timing, str);
 
+	DBG("[%s] e\n",__func__);
 	return 0;
 }
 
 static int mmc_ios_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, mmc_ios_show, inode->i_private);
+	int ret;
+	DBG("[%s] s\n",__func__);
+	ret = single_open(file, mmc_ios_show, inode->i_private);
+	
+	DBG("[%s] e\n",__func__);
+	return ret;
 }
 
 static const struct file_operations mmc_ios_fops = {
@@ -137,10 +152,13 @@ void mmc_add_host_debugfs(struct mmc_host *host)
 {
 	struct dentry *root;
 
+	DBG("[%s] s\n",__func__);
 	root = debugfs_create_dir(mmc_hostname(host), NULL);
-	if (IS_ERR(root))
+	if (IS_ERR(root)) {
 		/* Don't complain -- debugfs just isn't enabled */
+		DBG("[%s] e1\n",__func__);
 		return;
+	}
 	if (!root)
 		/* Complain -- debugfs is enabled, but it failed to
 		 * create the directory. */
@@ -151,6 +169,7 @@ void mmc_add_host_debugfs(struct mmc_host *host)
 	if (!debugfs_create_file("ios", S_IRUSR, root, host, &mmc_ios_fops))
 		goto err_ios;
 
+	DBG("[%s] e2\n",__func__);
 	return;
 
 err_ios:
@@ -158,11 +177,15 @@ err_ios:
 	host->debugfs_root = NULL;
 err_root:
 	dev_err(&host->class_dev, "failed to initialize debugfs\n");
+	
+	DBG("[%s] e3\n",__func__);
 }
 
 void mmc_remove_host_debugfs(struct mmc_host *host)
 {
+	DBG("[%s] s\n",__func__);
 	debugfs_remove_recursive(host->debugfs_root);
+	DBG("[%s] e\n",__func__);
 }
 
 static int mmc_dbg_card_status_get(void *data, u64 *val)
@@ -171,6 +194,8 @@ static int mmc_dbg_card_status_get(void *data, u64 *val)
 	u32		status;
 	int		ret;
 
+	DBG("[%s] s\n",__func__);
+	
 	mmc_claim_host(card->host);
 
 	ret = mmc_send_status(data, &status);
@@ -179,6 +204,7 @@ static int mmc_dbg_card_status_get(void *data, u64 *val)
 
 	mmc_release_host(card->host);
 
+	DBG("[%s] e\n",__func__);
 	return ret;
 }
 DEFINE_SIMPLE_ATTRIBUTE(mmc_dbg_card_status_fops, mmc_dbg_card_status_get,
@@ -194,9 +220,13 @@ static int mmc_ext_csd_open(struct inode *inode, struct file *filp)
 	u8 *ext_csd;
 	int err, i;
 
+	DBG("[%s] s\n",__func__);
+	
 	buf = kmalloc(EXT_CSD_STR_LEN + 1, GFP_KERNEL);
-	if (!buf)
+	if (!buf) {
+		DBG("[%s] e1\n",__func__);
 		return -ENOMEM;
+	}
 
 	ext_csd = kmalloc(512, GFP_KERNEL);
 	if (!ext_csd) {
@@ -217,26 +247,36 @@ static int mmc_ext_csd_open(struct inode *inode, struct file *filp)
 
 	filp->private_data = buf;
 	kfree(ext_csd);
+
+	DBG("[%s] e2\n",__func__);
 	return 0;
 
 out_free:
 	kfree(buf);
 	kfree(ext_csd);
+	
+	DBG("[%s] e3\n",__func__);
 	return err;
 }
 
 static ssize_t mmc_ext_csd_read(struct file *filp, char __user *ubuf,
 				size_t cnt, loff_t *ppos)
 {
+	ssize_t ret;
 	char *buf = filp->private_data;
 
-	return simple_read_from_buffer(ubuf, cnt, ppos,
+    DBG("[%s] s\n",__func__);
+	ret = simple_read_from_buffer(ubuf, cnt, ppos,
 				       buf, EXT_CSD_STR_LEN);
+	DBG("[%s] e\n",__func__);
+	return ret;
 }
 
 static int mmc_ext_csd_release(struct inode *inode, struct file *file)
 {
+	DBG("[%s] s\n",__func__);
 	kfree(file->private_data);
+	DBG("[%s] e\n",__func__);
 	return 0;
 }
 
@@ -250,14 +290,18 @@ void mmc_add_card_debugfs(struct mmc_card *card)
 {
 	struct mmc_host	*host = card->host;
 	struct dentry	*root;
-
-	if (!host->debugfs_root)
+	DBG("[%s] s\n",__func__);
+	if (!host->debugfs_root) {
+		DBG("[%s] e\n",__func__);
 		return;
+	}
 
 	root = debugfs_create_dir(mmc_card_id(card), host->debugfs_root);
-	if (IS_ERR(root))
+	if (IS_ERR(root)) {
+		DBG("[%s] e1\n",__func__);
 		/* Don't complain -- debugfs just isn't enabled */
 		return;
+	}
 	if (!root)
 		/* Complain -- debugfs is enabled, but it failed to
 		 * create the directory. */
@@ -278,15 +322,19 @@ void mmc_add_card_debugfs(struct mmc_card *card)
 					&mmc_dbg_ext_csd_fops))
 			goto err;
 
+	DBG("[%s] e2\n",__func__);
 	return;
 
 err:
 	debugfs_remove_recursive(root);
 	card->debugfs_root = NULL;
 	dev_err(&card->dev, "failed to initialize debugfs\n");
+	DBG("[%s] e3\n",__func__);
 }
 
 void mmc_remove_card_debugfs(struct mmc_card *card)
 {
+	DBG("[%s] s\n",__func__);
 	debugfs_remove_recursive(card->debugfs_root);
+	DBG("[%s] e\n",__func__);
 }

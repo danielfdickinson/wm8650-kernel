@@ -906,6 +906,25 @@ config DS1302
 
 endif # RTC_LIB
 
+config PWM_WMT
+	tristate "WMT PWM support"
+	depends on ARCH_WMT
+	---help---
+	  Say Y here if you want to enable PWM on WMT application processor.
+
+          To compile this driver as a module, choose M here: the
+	  module will be called wmt_pwm
+
+config WMT_VIBRATOR
+	tristate "WMT vibrator support"
+	depends on ARCH_WMT
+	default y
+	---help---
+	  Say Y here if you want to enable vibrator driver.
+
+          To compile this driver as a module, choose M here: the
+	  module will be called wmt_vibrate
+
 config DTLK
 	tristate "Double Talk PC internal speech card support"
 	depends on ISA

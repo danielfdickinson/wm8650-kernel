@@ -43,8 +43,8 @@ extern void nand_wait_ready(struct mtd_info *mtd);
  * is supported now. If you add a chip with bigger oobsize/page
  * adjust this accordingly.
  */
-#define NAND_MAX_OOBSIZE	128
-#define NAND_MAX_PAGESIZE	4096
+#define NAND_MAX_OOBSIZE	448
+#define NAND_MAX_PAGESIZE	8192
 
 /*
  * Constants for hardware specific CLE/ALE/NCE function
@@ -293,6 +293,10 @@ struct nand_ecc_ctrl {
 	int			(*write_oob)(struct mtd_info *mtd,
 					     struct nand_chip *chip,
 					     int page);
+        int			(*read_bb_oob)(struct mtd_info *mtd,
+					    struct nand_chip *chip,
+					    int page,
+					    int sndcmd);
 };
 
 /**
@@ -456,7 +460,31 @@ struct nand_flash_dev {
 	unsigned long erasesize;
 	unsigned long options;
 };
-
+/* DannierChen-2009-10-07 add for new nand flash support list */
+#ifndef DWORD
+#define DWORD	unsigned int
+#endif
+#define MAX_PRODUCT_NAME_LENGTH 0x20
+struct WMT_nand_flash_dev {
+ DWORD dwFlashID;            //composed by 4 bytes of ID. For example:0xADF1801D
+ DWORD dwBlockCount;      //block count of one chip. For example: 1024
+ DWORD dwPageSize;       //page size. For example:2048(other value can be 512 or 4096)
+ DWORD dwSpareSize;       //spare area size. For example:16(almost all kinds of nand is 16)
+ DWORD dwBlockSize;       //block size = dwPageSize * PageCntPerBlock. For example:131072
+ DWORD dwAddressCycle;      //address cycle 4 or 5
+ DWORD dwBI0Position;      //BI0 page postion in block
+ DWORD dwBI1Position;      //BI1 page postion in block
+ DWORD dwBIOffset;       //BI offset in page
+ DWORD dwDataWidth;      //data with X8 or X16
+ DWORD dwPageProgramLimit;     //chip can program PAGE_PROGRAM_LIMIT times within the same page
+ DWORD dwSeqRowReadSupport;    //whether support sequential row read, 1 = support 0 = not support
+ DWORD dwSeqPageProgram;     //chip need sequential page program in a block. 1 = need
+ DWORD dwNandType;       //MLC or SLC
+ DWORD dwECCBitNum;      //ECC bit number needed
+ DWORD dwRWTimming;     //NFC Read Pulse width and Read hold time, write so does. default =0x12101210
+ char ProductName[MAX_PRODUCT_NAME_LENGTH]; //product name. for example "HYNIX_NF_HY27UF081G2A"
+ unsigned long options;
+};
 /**
  * struct nand_manufacturers - NAND Flash Manufacturer ID Structure
  * @name:	Manufacturer name
@@ -467,8 +495,14 @@ struct nand_manufacturers {
 	char * name;
 };
 
+extern struct WMT_nand_flash_dev WMT_nand_flash_ids[];
 extern struct nand_flash_dev nand_flash_ids[];
 extern struct nand_manufacturers nand_manuf_ids[];
+/* edwardwan add 20080605  */
+#ifdef CONFIG_MTD_PARTITIONS
+#include <linux/mtd/partitions.h>
+extern struct mtd_partition nand_partitions[];
+#endif
 
 /**
  * struct nand_bbt_descr - bad block table descriptor
@@ -503,6 +537,7 @@ struct nand_bbt_descr {
 	int	maxblocks;
 	int	reserved_block_code;
 	uint8_t	*pattern;
+	int	page_offset[2]; /* used to record bad block signature in which pages.*/
 };
 
 /* Options for the bad block table descriptors */

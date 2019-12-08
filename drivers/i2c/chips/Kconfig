@@ -36,4 +36,10 @@ config SENSORS_PCA963X
 	 This driver can also be built as a module.  If so, the module
 	 will be called pca963X.
 
+config WMT_I2C_API
+    tristate "WMT I2C Device driver API (DDR Ver)"
+    depends on I2C && ARCH_WMT
+	help
+	This module export i2c read/write API for other modules
+
 endmenu

@@ -31,8 +31,42 @@
 #include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
+#include <mach/hardware.h>
+#include <linux/workqueue.h>
 
 #include "wm8900.h"
+
+
+/*
+ * Debug
+ */
+//#define WMT_WM8900_DEBUG 1
+//#define WMT_WM8900_DEBUG_DETAIL 1
+
+
+#define AUDIO_NAME "WM8900"
+
+#ifdef WMT_WM8900_DEBUG
+#define DPRINTK(format, arg...) \
+	printk(KERN_INFO AUDIO_NAME ": " format "\n" , ## arg)
+#else
+#define DPRINTK(format, arg...) do {} while (0)
+#endif
+
+#ifdef WMT_WM8900_DEBUG_DETAIL
+#define DBG_DETAIL(format, arg...) \
+	printk(KERN_INFO AUDIO_NAME ": [%s]" format "\n" , __FUNCTION__, ## arg)
+#else
+#define DBG_DETAIL(format, arg...) do {} while (0)
+#endif
+
+#define err(format, arg...) \
+	printk(KERN_ERR AUDIO_NAME ": " format "\n" , ## arg)
+#define info(format, arg...) \
+	printk(KERN_INFO AUDIO_NAME ": " format "\n" , ## arg)
+#define warn(format, arg...) \
+	printk(KERN_WARNING AUDIO_NAME ": " format "\n" , ## arg)
+
 
 /* WM8900 register space */
 #define WM8900_REG_RESET	0x0
@@ -136,6 +170,15 @@
 
 #define WM8900_LRC_MASK 0xfc00
 
+#define USE_UBOOT_PARA
+
+static struct workqueue_struct *wm8900_workqueue;
+static struct work_struct wm8900_work;
+
+static struct snd_soc_codec *wm8900_codec = NULL;
+
+extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
+
 struct snd_soc_codec_device soc_codec_dev_wm8900;
 
 struct wm8900_priv {
@@ -152,7 +195,7 @@ struct wm8900_priv {
  * have slow control buses so we cache the registers.
  */
 static const u16 wm8900_reg_defaults[WM8900_MAXREG] = {
-	0x8900, 0x0000,
+	0x8900, 0x0000,/*0x00*/
 	0xc000, 0x0000,
 	0x4050, 0x4000,
 	0x0008, 0x0000,
@@ -160,7 +203,7 @@ static const u16 wm8900_reg_defaults[WM8900_MAXREG] = {
 	0x1004, 0x00c0,
 	0x00c0, 0x0000,
 	0x0100, 0x00c0,
-	0x00c0, 0x0000,
+	0x00c0, 0x0000,/*0x10*/
 	0xb001, 0x0000,
 	0x0000, 0x0044,
 	0x004c, 0x004c,
@@ -168,7 +211,7 @@ static const u16 wm8900_reg_defaults[WM8900_MAXREG] = {
 	0x0000, 0x0044,
 	0x0000, 0x0000,
 	0x0002, 0x0000,
-	0x0000, 0x0000,
+	0x0000, 0x0000,/*0x20*/
 	0x0000, 0x0000,
 	0x0008, 0x0000,
 	0x0000, 0x0008,
@@ -176,15 +219,29 @@ static const u16 wm8900_reg_defaults[WM8900_MAXREG] = {
 	0x0000, 0x0000,
 	0x0050, 0x0050,
 	0x0055, 0x0055,
-	0x0055, 0x0000,
+	0x0055, 0x0000,/*0x30*/
 	0x0000, 0x0079,
-	0x0079, 0x0079,
-	0x0079, 0x0000,
+	0x0079, 0x003a,
+	0x003a, 0x0000,
 	/* Remaining registers all zero */
 };
 
+typedef struct {
+	char enable_flag;
+	u16  REG_LINVOL;
+	u16  REG_RINVOL;
+	u16  REG_ADCPATH;
+}wm8900_uboot_env_t;
+
+wm8900_uboot_env_t wm8900_env;
+unsigned int from_internal_flag = 0;
+unsigned char wmt_hw_mute = 1;
+
+
 static int wm8900_volatile_register(unsigned int reg)
 {
+	DBG_DETAIL();
+	
 	switch (reg) {
 	case WM8900_REG_ID:
 	case WM8900_REG_POWER1:
@@ -193,70 +250,228 @@ static int wm8900_volatile_register(unsigned int reg)
 		return 0;
 	}
 }
+/*
+ * read wm8900 register cache
+ */
+static inline unsigned int wm8900_read_reg_cache(struct snd_soc_codec *codec,
+	unsigned int reg)
+{
+	u16 *cache = codec->reg_cache;
+
+	BUG_ON(reg >= WM8900_MAXREG);
+
+	//DBG_DETAIL();
+
+	if (reg == WM8900_REG_ID)
+		return 0;
+
+	return cache[reg];
+}
+
+/*
+ * write wm8900 register cache
+ */
+static inline void wm8900_write_reg_cache(struct snd_soc_codec *codec,
+	u16 reg, unsigned int value)
+{
+	u16 *cache = codec->reg_cache;
+
+	BUG_ON(reg >= WM8900_MAXREG);
+
+	//DBG_DETAIL();
+
+	cache[reg] = value;
+}
+
+/*
+ * write to the WM8900 register space
+ */
+static int wm8900_write(struct snd_soc_codec *codec, unsigned int reg,
+			unsigned int value)
+{
+	u8 data[3];
+
+	//DBG_DETAIL();
+
+	if (value == wm8900_read_reg_cache(codec, reg))
+		return 0;
+	
+	//printk(KERN_ALERT "*** REG=0x%x, val=0x%x *** \n", reg, value);
+
+
+	/* data is
+	 *   D15..D9 WM8900 register offset
+	 *   D8...D0 register data
+	 */
+	data[0] = reg;
+	data[1] = value >> 8;
+	data[2] = value & 0x00ff;
+
+	wm8900_write_reg_cache(codec, reg, value);
+	if (codec->hw_write(codec->control_data, data, 3) == 3)
+		return 0;
+	else
+		return -EIO;
+}
+
+/*
+ * Read from the wm8900.
+ */
+static unsigned int wm8900_chip_read(struct snd_soc_codec *codec, u8 reg)
+{
+	struct i2c_msg xfer[2];
+	u16 data;
+	int ret;
+	struct i2c_client *client = codec->control_data;
+
+	BUG_ON(reg != WM8900_REG_ID && reg != WM8900_REG_POWER1);
+
+	DBG_DETAIL();
+
+	/* Write register */
+	xfer[0].addr = client->addr;
+	xfer[0].flags = 0;
+	xfer[0].len = 1;
+	xfer[0].buf = &reg;
+
+	/* Read data */
+	xfer[1].addr = client->addr;
+	xfer[1].flags = I2C_M_RD;
+	xfer[1].len = 2;
+	xfer[1].buf = (u8 *)&data;
+
+	ret = i2c_transfer(client->adapter, xfer, 2);
+	if (ret != 2) {
+		printk(KERN_CRIT "i2c_transfer returned %d\n", ret);
+		return 0;
+	}
+
+	return (data >> 8) | ((data & 0xff) << 8);
+}
+
+/*
+ * Read from the WM8900 register space.  Most registers can't be read
+ * and are therefore supplied from cache.
+ */
+static unsigned int wm8900_read(struct snd_soc_codec *codec, unsigned int reg)
+{
+	//DBG_DETAIL();
+	
+	switch (reg) {
+	case WM8900_REG_ID:
+		return wm8900_chip_read(codec, reg);
+	default:
+		return wm8900_read_reg_cache(codec, reg);
+	}
+}
+
+static void wm8900_work_func(struct work_struct *work)
+{
+	/* Enable the input stage */
+	u16 hpctl1 = wm8900_read(wm8900_codec, WM8900_REG_HPCTL1);
+
+	DBG_DETAIL();
+	
+	msleep(2000);
+	hpctl1 &= ~WM8900_REG_HPCTL1_HP_CLAMP_IP;
+	hpctl1 |= WM8900_REG_HPCTL1_HP_SHORT |
+		WM8900_REG_HPCTL1_HP_SHORT2 |
+		WM8900_REG_HPCTL1_HP_IPSTAGE_ENA;
+	wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, hpctl1);
+
+	msleep(400);
+
+	/* Enable the output stage */
+	hpctl1 &= ~WM8900_REG_HPCTL1_HP_CLAMP_OP;
+	hpctl1 |= WM8900_REG_HPCTL1_HP_OPSTAGE_ENA;
+	wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, hpctl1);
+
+	/* Remove the shorts */
+	hpctl1 &= ~WM8900_REG_HPCTL1_HP_SHORT2;
+	wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, hpctl1);
+	hpctl1 &= ~WM8900_REG_HPCTL1_HP_SHORT;
+	wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, hpctl1);
+}
 
 static void wm8900_reset(struct snd_soc_codec *codec)
 {
-	snd_soc_write(codec, WM8900_REG_RESET, 0);
+	DBG_DETAIL();
+	
+	wm8900_write(codec, WM8900_REG_RESET, 0);
 
 	memcpy(codec->reg_cache, wm8900_reg_defaults,
-	       sizeof(codec->reg_cache));
+		sizeof(wm8900_reg_defaults[0]) * WM8900_MAXREG);
 }
 
 static int wm8900_hp_event(struct snd_soc_dapm_widget *w,
 			   struct snd_kcontrol *kcontrol, int event)
 {
 	struct snd_soc_codec *codec = w->codec;
-	u16 hpctl1 = snd_soc_read(codec, WM8900_REG_HPCTL1);
+	u16 hpctl1 = wm8900_read(codec, WM8900_REG_HPCTL1);
+
+	DBG_DETAIL();
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		/* Clamp headphone outputs */
 		hpctl1 = WM8900_REG_HPCTL1_HP_CLAMP_IP |
 			WM8900_REG_HPCTL1_HP_CLAMP_OP;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 		break;
 
 	case SND_SOC_DAPM_POST_PMU:
 		/* Enable the input stage */
+		//schedule_work(&wm8900_work);
+		queue_work(wm8900_workqueue, &wm8900_work);
+		break;
+
+#if 0
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_CLAMP_IP;
 		hpctl1 |= WM8900_REG_HPCTL1_HP_SHORT |
 			WM8900_REG_HPCTL1_HP_SHORT2 |
 			WM8900_REG_HPCTL1_HP_IPSTAGE_ENA;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 
 		msleep(400);
 
 		/* Enable the output stage */
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_CLAMP_OP;
 		hpctl1 |= WM8900_REG_HPCTL1_HP_OPSTAGE_ENA;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 
 		/* Remove the shorts */
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_SHORT2;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_SHORT;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 		break;
+#endif
 
 	case SND_SOC_DAPM_PRE_PMD:
+		/*turn on hardware mute*/
+		/*if (hw_mute_polarity == 1)
+			gpio_set_value(GPIO_AUDIO_MUTE, GPIO_OUTPUT_HIGH);
+		else
+			gpio_set_value(GPIO_AUDIO_MUTE, GPIO_OUTPUT_LOW);*/
+
 		/* Short the output */
 		hpctl1 |= WM8900_REG_HPCTL1_HP_SHORT;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 
 		/* Disable the output stage */
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_OPSTAGE_ENA;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 
 		/* Clamp the outputs and power down input */
 		hpctl1 |= WM8900_REG_HPCTL1_HP_CLAMP_IP |
 			WM8900_REG_HPCTL1_HP_CLAMP_OP;
 		hpctl1 &= ~WM8900_REG_HPCTL1_HP_IPSTAGE_ENA;
-		snd_soc_write(codec, WM8900_REG_HPCTL1, hpctl1);
+		wm8900_write(codec, WM8900_REG_HPCTL1, hpctl1);
 		break;
 
 	case SND_SOC_DAPM_POST_PMD:
 		/* Disable everything */
-		snd_soc_write(codec, WM8900_REG_HPCTL1, 0);
+		wm8900_write(codec, WM8900_REG_HPCTL1, 0);
 		break;
 
 	default:
@@ -331,6 +546,17 @@ SOC_ENUM_SINGLE(WM8900_REG_SIDETONE, 2, 3, sidetone_txt);
 
 static const struct soc_enum dacr_sidetone =
 SOC_ENUM_SINGLE(WM8900_REG_SIDETONE, 0, 3, sidetone_txt);
+
+static const char *pga_boost_txt[] = {
+	"0dB", "13dB", "20dB", "29dB"
+};
+
+static const struct soc_enum left_pga_boost =
+SOC_ENUM_SINGLE(WM8900_REG_ADCPATH, 4, 4, pga_boost_txt);
+
+static const struct soc_enum right_pga_boost =
+SOC_ENUM_SINGLE(WM8900_REG_ADCPATH, 0, 4, pga_boost_txt);
+
 
 static const struct snd_kcontrol_new wm8900_snd_controls[] = {
 SOC_ENUM("Mic Bias Level", mic_bias_level),
@@ -423,8 +649,28 @@ SOC_DOUBLE_R("LINEOUT2 ZC Switch",
 	     WM8900_REG_LOUT2CTL, WM8900_REG_ROUT2CTL, 7, 1, 0),
 SOC_SINGLE("LINEOUT2 LP -12dB", WM8900_REG_LOUTMIXCTL1,
 	   0, 1, 1),
+SOC_ENUM("Left PGA Boost Gain", left_pga_boost),
+SOC_ENUM("Right PGA Boost Gain", right_pga_boost),	
 
 };
+
+/* add non dapm controls */
+static int wm8900_add_controls(struct snd_soc_codec *codec)
+{
+	int err, i;
+
+	DBG_DETAIL();
+
+	for (i = 0; i < ARRAY_SIZE(wm8900_snd_controls); i++) {
+		err = snd_ctl_add(codec->card,
+				  snd_soc_cnew(&wm8900_snd_controls[i],
+					       codec, NULL));
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
+}
 
 static const struct snd_kcontrol_new wm8900_dapm_loutput2_control =
 SOC_DAPM_SINGLE("LINEOUT2L Switch", WM8900_REG_POWER3, 6, 1, 0);
@@ -613,6 +859,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 static int wm8900_add_widgets(struct snd_soc_codec *codec)
 {
+	DBG_DETAIL();
+	
 	snd_soc_dapm_new_controls(codec, wm8900_dapm_widgets,
 				  ARRAY_SIZE(wm8900_dapm_widgets));
 
@@ -632,7 +880,9 @@ static int wm8900_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_codec *codec = socdev->card->codec;
 	u16 reg;
 
-	reg = snd_soc_read(codec, WM8900_REG_AUDIO1) & ~0x60;
+	DBG_DETAIL();
+
+	reg = wm8900_read(codec, WM8900_REG_AUDIO1) & ~0x60;
 
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
@@ -647,20 +897,21 @@ static int wm8900_hw_params(struct snd_pcm_substream *substream,
 		reg |= 0x60;
 		break;
 	default:
-		return -EINVAL;
+		//return -EINVAL;
+		break;
 	}
 
-	snd_soc_write(codec, WM8900_REG_AUDIO1, reg);
+	wm8900_write(codec, WM8900_REG_AUDIO1, reg);
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		reg = snd_soc_read(codec, WM8900_REG_DACCTRL);
+		reg = wm8900_read(codec, WM8900_REG_DACCTRL);
 
 		if (params_rate(params) <= 24000)
 			reg |= WM8900_REG_DACCTRL_DAC_SB_FILT;
 		else
 			reg &= ~WM8900_REG_DACCTRL_DAC_SB_FILT;
 
-		snd_soc_write(codec, WM8900_REG_DACCTRL, reg);
+		wm8900_write(codec, WM8900_REG_DACCTRL, reg);
 	}
 
 	return 0;
@@ -687,6 +938,8 @@ static int fll_factors(struct _fll_div *fll_div, unsigned int Fref,
 	unsigned int div;
 
 	BUG_ON(!Fout);
+
+	DBG_DETAIL();
 
 	/* The FLL must run at 90-100MHz which is then scaled down to
 	 * the output value by FLLCLK_DIV. */
@@ -750,22 +1003,24 @@ static int wm8900_set_fll(struct snd_soc_codec *codec,
 	struct _fll_div fll_div;
 	unsigned int reg;
 
+	DBG_DETAIL();
+
 	if (wm8900->fll_in == freq_in && wm8900->fll_out == freq_out)
 		return 0;
 
 	/* The digital side should be disabled during any change. */
-	reg = snd_soc_read(codec, WM8900_REG_POWER1);
-	snd_soc_write(codec, WM8900_REG_POWER1,
+	reg = wm8900_read(codec, WM8900_REG_POWER1);
+	wm8900_write(codec, WM8900_REG_POWER1,
 		     reg & (~WM8900_REG_POWER1_FLL_ENA));
 
 	/* Disable the FLL? */
 	if (!freq_in || !freq_out) {
-		reg = snd_soc_read(codec, WM8900_REG_CLOCKING1);
-		snd_soc_write(codec, WM8900_REG_CLOCKING1,
+		reg = wm8900_read(codec, WM8900_REG_CLOCKING1);
+		wm8900_write(codec, WM8900_REG_CLOCKING1,
 			     reg & (~WM8900_REG_CLOCKING1_MCLK_SRC));
 
-		reg = snd_soc_read(codec, WM8900_REG_FLLCTL1);
-		snd_soc_write(codec, WM8900_REG_FLLCTL1,
+		reg = wm8900_read(codec, WM8900_REG_FLLCTL1);
+		wm8900_write(codec, WM8900_REG_FLLCTL1,
 			     reg & (~WM8900_REG_FLLCTL1_OSC_ENA));
 
 		wm8900->fll_in = freq_in;
@@ -782,33 +1037,33 @@ static int wm8900_set_fll(struct snd_soc_codec *codec,
 
 	/* The osclilator *MUST* be enabled before we enable the
 	 * digital circuit. */
-	snd_soc_write(codec, WM8900_REG_FLLCTL1,
+	wm8900_write(codec, WM8900_REG_FLLCTL1,
 		     fll_div.fll_ratio | WM8900_REG_FLLCTL1_OSC_ENA);
 
-	snd_soc_write(codec, WM8900_REG_FLLCTL4, fll_div.n >> 5);
-	snd_soc_write(codec, WM8900_REG_FLLCTL5,
+	wm8900_write(codec, WM8900_REG_FLLCTL4, fll_div.n >> 5);
+	wm8900_write(codec, WM8900_REG_FLLCTL5,
 		     (fll_div.fllclk_div << 6) | (fll_div.n & 0x1f));
 
 	if (fll_div.k) {
-		snd_soc_write(codec, WM8900_REG_FLLCTL2,
+		wm8900_write(codec, WM8900_REG_FLLCTL2,
 			     (fll_div.k >> 8) | 0x100);
-		snd_soc_write(codec, WM8900_REG_FLLCTL3, fll_div.k & 0xff);
+		wm8900_write(codec, WM8900_REG_FLLCTL3, fll_div.k & 0xff);
 	} else
-		snd_soc_write(codec, WM8900_REG_FLLCTL2, 0);
+		wm8900_write(codec, WM8900_REG_FLLCTL2, 0);
 
 	if (fll_div.fll_slow_lock_ref)
-		snd_soc_write(codec, WM8900_REG_FLLCTL6,
+		wm8900_write(codec, WM8900_REG_FLLCTL6,
 			     WM8900_REG_FLLCTL6_FLL_SLOW_LOCK_REF);
 	else
-		snd_soc_write(codec, WM8900_REG_FLLCTL6, 0);
+		wm8900_write(codec, WM8900_REG_FLLCTL6, 0);
 
-	reg = snd_soc_read(codec, WM8900_REG_POWER1);
-	snd_soc_write(codec, WM8900_REG_POWER1,
+	reg = wm8900_read(codec, WM8900_REG_POWER1);
+	wm8900_write(codec, WM8900_REG_POWER1,
 		     reg | WM8900_REG_POWER1_FLL_ENA);
 
 reenable:
-	reg = snd_soc_read(codec, WM8900_REG_CLOCKING1);
-	snd_soc_write(codec, WM8900_REG_CLOCKING1,
+	reg = wm8900_read(codec, WM8900_REG_CLOCKING1);
+	wm8900_write(codec, WM8900_REG_CLOCKING1,
 		     reg | WM8900_REG_CLOCKING1_MCLK_SRC);
 
 	return 0;
@@ -817,6 +1072,8 @@ reenable:
 static int wm8900_set_dai_pll(struct snd_soc_dai *codec_dai,
 		int pll_id, unsigned int freq_in, unsigned int freq_out)
 {
+	DBG_DETAIL();
+	
 	return wm8900_set_fll(codec_dai->codec, pll_id, freq_in, freq_out);
 }
 
@@ -826,40 +1083,42 @@ static int wm8900_set_dai_clkdiv(struct snd_soc_dai *codec_dai,
 	struct snd_soc_codec *codec = codec_dai->codec;
 	unsigned int reg;
 
+	DBG_DETAIL();
+
 	switch (div_id) {
 	case WM8900_BCLK_DIV:
-		reg = snd_soc_read(codec, WM8900_REG_CLOCKING1);
-		snd_soc_write(codec, WM8900_REG_CLOCKING1,
+		reg = wm8900_read(codec, WM8900_REG_CLOCKING1);
+		wm8900_write(codec, WM8900_REG_CLOCKING1,
 			     div | (reg & WM8900_REG_CLOCKING1_BCLK_MASK));
 		break;
 	case WM8900_OPCLK_DIV:
-		reg = snd_soc_read(codec, WM8900_REG_CLOCKING1);
-		snd_soc_write(codec, WM8900_REG_CLOCKING1,
+		reg = wm8900_read(codec, WM8900_REG_CLOCKING1);
+		wm8900_write(codec, WM8900_REG_CLOCKING1,
 			     div | (reg & WM8900_REG_CLOCKING1_OPCLK_MASK));
 		break;
 	case WM8900_DAC_LRCLK:
-		reg = snd_soc_read(codec, WM8900_REG_AUDIO4);
-		snd_soc_write(codec, WM8900_REG_AUDIO4,
+		reg = wm8900_read(codec, WM8900_REG_AUDIO4);
+		wm8900_write(codec, WM8900_REG_AUDIO4,
 			     div | (reg & WM8900_LRC_MASK));
 		break;
 	case WM8900_ADC_LRCLK:
-		reg = snd_soc_read(codec, WM8900_REG_AUDIO3);
-		snd_soc_write(codec, WM8900_REG_AUDIO3,
+		reg = wm8900_read(codec, WM8900_REG_AUDIO3);
+		wm8900_write(codec, WM8900_REG_AUDIO3,
 			     div | (reg & WM8900_LRC_MASK));
 		break;
 	case WM8900_DAC_CLKDIV:
-		reg = snd_soc_read(codec, WM8900_REG_CLOCKING2);
-		snd_soc_write(codec, WM8900_REG_CLOCKING2,
+		reg = wm8900_read(codec, WM8900_REG_CLOCKING2);
+		wm8900_write(codec, WM8900_REG_CLOCKING2,
 			     div | (reg & WM8900_REG_CLOCKING2_DAC_CLKDIV));
 		break;
 	case WM8900_ADC_CLKDIV:
-		reg = snd_soc_read(codec, WM8900_REG_CLOCKING2);
-		snd_soc_write(codec, WM8900_REG_CLOCKING2,
+		reg = wm8900_read(codec, WM8900_REG_CLOCKING2);
+		wm8900_write(codec, WM8900_REG_CLOCKING2,
 			     div | (reg & WM8900_REG_CLOCKING2_ADC_CLKDIV));
 		break;
 	case WM8900_LRCLK_MODE:
-		reg = snd_soc_read(codec, WM8900_REG_DACCTRL);
-		snd_soc_write(codec, WM8900_REG_DACCTRL,
+		reg = wm8900_read(codec, WM8900_REG_DACCTRL);
+		wm8900_write(codec, WM8900_REG_DACCTRL,
 			     div | (reg & WM8900_REG_DACCTRL_AIF_LRCLKRATE));
 		break;
 	default:
@@ -876,10 +1135,12 @@ static int wm8900_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	struct snd_soc_codec *codec = codec_dai->codec;
 	unsigned int clocking1, aif1, aif3, aif4;
 
-	clocking1 = snd_soc_read(codec, WM8900_REG_CLOCKING1);
-	aif1 = snd_soc_read(codec, WM8900_REG_AUDIO1);
-	aif3 = snd_soc_read(codec, WM8900_REG_AUDIO3);
-	aif4 = snd_soc_read(codec, WM8900_REG_AUDIO4);
+	DBG_DETAIL();
+	
+	clocking1 = wm8900_read(codec, WM8900_REG_CLOCKING1);
+	aif1 = wm8900_read(codec, WM8900_REG_AUDIO1);
+	aif3 = wm8900_read(codec, WM8900_REG_AUDIO3);
+	aif4 = wm8900_read(codec, WM8900_REG_AUDIO4);
 
 	/* set master/slave audio interface */
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
@@ -975,10 +1236,10 @@ static int wm8900_set_dai_fmt(struct snd_soc_dai *codec_dai,
 		return -EINVAL;
 	}
 
-	snd_soc_write(codec, WM8900_REG_CLOCKING1, clocking1);
-	snd_soc_write(codec, WM8900_REG_AUDIO1, aif1);
-	snd_soc_write(codec, WM8900_REG_AUDIO3, aif3);
-	snd_soc_write(codec, WM8900_REG_AUDIO4, aif4);
+	wm8900_write(codec, WM8900_REG_CLOCKING1, clocking1);
+	wm8900_write(codec, WM8900_REG_AUDIO1, aif1);
+	wm8900_write(codec, WM8900_REG_AUDIO3, aif3);
+	wm8900_write(codec, WM8900_REG_AUDIO4, aif4);
 
 	return 0;
 }
@@ -988,15 +1249,70 @@ static int wm8900_digital_mute(struct snd_soc_dai *codec_dai, int mute)
 	struct snd_soc_codec *codec = codec_dai->codec;
 	u16 reg;
 
-	reg = snd_soc_read(codec, WM8900_REG_DACCTRL);
+	DBG_DETAIL();
+
+	reg = wm8900_read(codec, WM8900_REG_DACCTRL);
 
 	if (mute)
 		reg |= WM8900_REG_DACCTRL_MUTE;
 	else
 		reg &= ~WM8900_REG_DACCTRL_MUTE;
 
-	snd_soc_write(codec, WM8900_REG_DACCTRL, reg);
+	wm8900_write(codec, WM8900_REG_DACCTRL, reg);
 
+	return 0;
+}
+
+static int wm8900_startup(struct snd_pcm_substream *substream,
+			   struct snd_soc_dai *codec_dai)
+{
+	struct snd_soc_codec *codec = codec_dai->codec;
+	
+	DBG_DETAIL("stream=%d", substream->stream);
+
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+		wm8900_write(codec, WM8900_REG_INCTL,
+			wm8900_read(codec, WM8900_REG_INCTL) | 0x044);
+	}
+	
+	return 0;
+}
+
+static void wm8900_shutdown(struct snd_pcm_substream *substream,
+			     struct snd_soc_dai *codec_dai)
+{
+	struct snd_soc_codec *codec = codec_dai->codec;
+	
+	DBG_DETAIL("stream=%d", substream->stream);
+
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+		wm8900_write(codec, WM8900_REG_INCTL,
+			wm8900_read(codec, WM8900_REG_INCTL) & ~0x044);
+	}
+}
+
+static int wm8900_trigger(struct snd_pcm_substream *substream,
+			      int cmd, struct snd_soc_dai *codec_dai)
+{
+	DBG_DETAIL("cmd=%d, stream=%d", cmd, substream->stream);
+	
+	switch (cmd) {
+		case SNDRV_PCM_TRIGGER_START:
+		case SNDRV_PCM_TRIGGER_RESUME:
+		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+			if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK) && (wmt_hw_mute)) {
+				/* mute disable */
+				GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL |= BIT5;
+				wmt_hw_mute = 0;
+				mdelay(10);
+			}
+			break;
+		case SNDRV_PCM_TRIGGER_STOP:
+		case SNDRV_PCM_TRIGGER_SUSPEND:
+		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+			break;
+	}
+	
 	return 0;
 }
 
@@ -1010,6 +1326,9 @@ static int wm8900_digital_mute(struct snd_soc_dai *codec_dai, int mute)
 
 static struct snd_soc_dai_ops wm8900_dai_ops = {
 	.hw_params	= wm8900_hw_params,
+	.startup = wm8900_startup,
+	.shutdown = wm8900_shutdown,
+	.trigger = wm8900_trigger,
 	.set_clkdiv	= wm8900_set_dai_clkdiv,
 	.set_pll	= wm8900_set_dai_pll,
 	.set_fmt	= wm8900_set_dai_fmt,
@@ -1041,15 +1360,19 @@ static int wm8900_set_bias_level(struct snd_soc_codec *codec,
 {
 	u16 reg;
 
+	DBG_DETAIL();
+	
 	switch (level) {
 	case SND_SOC_BIAS_ON:
 		/* Enable thermal shutdown */
-		reg = snd_soc_read(codec, WM8900_REG_GPIO);
-		snd_soc_write(codec, WM8900_REG_GPIO,
+#if 0
+		reg = wm8900_read(codec, WM8900_REG_GPIO);
+		wm8900_write(codec, WM8900_REG_GPIO,
 			     reg | WM8900_REG_GPIO_TEMP_ENA);
-		reg = snd_soc_read(codec, WM8900_REG_ADDCTL);
-		snd_soc_write(codec, WM8900_REG_ADDCTL,
+		reg = wm8900_read(codec, WM8900_REG_ADDCTL);
+		wm8900_write(codec, WM8900_REG_ADDCTL,
 			     reg | WM8900_REG_ADDCTL_TEMP_SD);
+#endif
 		break;
 
 	case SND_SOC_BIAS_PREPARE:
@@ -1059,73 +1382,128 @@ static int wm8900_set_bias_level(struct snd_soc_codec *codec,
 		/* Charge capacitors if initial power up */
 		if (codec->bias_level == SND_SOC_BIAS_OFF) {
 			/* STARTUP_BIAS_ENA on */
-			snd_soc_write(codec, WM8900_REG_POWER1,
+			wm8900_write(codec, WM8900_REG_HPCTL1, 0x030);
+
+			wm8900_write(codec, WM8900_REG_ADDCTL,
+				     WM8900_REG_ADDCTL_BIAS_SRC |
+				     WM8900_REG_ADDCTL_TEMP_SD);
+
+			wm8900_write(codec, WM8900_REG_POWER1,
 				     WM8900_REG_POWER1_STARTUP_BIAS_ENA);
 
 			/* Startup bias mode */
-			snd_soc_write(codec, WM8900_REG_ADDCTL,
+			wm8900_write(codec, WM8900_REG_ADDCTL,
 				     WM8900_REG_ADDCTL_BIAS_SRC |
-				     WM8900_REG_ADDCTL_VMID_SOFTST);
+				     WM8900_REG_ADDCTL_VMID_SOFTST |
+				     WM8900_REG_ADDCTL_TEMP_SD |
+				     WM8900_REG_ADDCTL_OUT1_DIS);
+
+			wm8900_write(codec, WM8900_REG_POWER3, 0x60);
+
+			wm8900_write(codec, WM8900_REG_ADDCTL,
+				     WM8900_REG_ADDCTL_BIAS_SRC |
+				     WM8900_REG_ADDCTL_VMID_SOFTST |
+				     WM8900_REG_ADDCTL_TEMP_SD);
 
 			/* VMID 2x50k */
-			snd_soc_write(codec, WM8900_REG_POWER1,
+			wm8900_write(codec, WM8900_REG_POWER1,
 				     WM8900_REG_POWER1_STARTUP_BIAS_ENA | 0x1);
 
 			/* Allow capacitors to charge */
 			schedule_timeout_interruptible(msecs_to_jiffies(400));
 
 			/* Enable bias */
-			snd_soc_write(codec, WM8900_REG_POWER1,
+			wm8900_write(codec, WM8900_REG_POWER1,
 				     WM8900_REG_POWER1_STARTUP_BIAS_ENA |
 				     WM8900_REG_POWER1_BIAS_ENA | 0x1);
 
-			snd_soc_write(codec, WM8900_REG_ADDCTL, 0);
+			wm8900_write(codec, WM8900_REG_ADDCTL, 0x02);
 
-			snd_soc_write(codec, WM8900_REG_POWER1,
+			wm8900_write(codec, WM8900_REG_POWER1,
 				     WM8900_REG_POWER1_BIAS_ENA | 0x1);
 		}
 
-		reg = snd_soc_read(codec, WM8900_REG_POWER1);
-		snd_soc_write(codec, WM8900_REG_POWER1,
+		reg = wm8900_read(codec, WM8900_REG_POWER1);
+		/*
+		wm8900_write(codec, WM8900_REG_POWER1,
 			     (reg & WM8900_REG_POWER1_FLL_ENA) |
 			     WM8900_REG_POWER1_BIAS_ENA | 0x1);
-		snd_soc_write(codec, WM8900_REG_POWER2,
+		*/
+		wm8900_write(codec, WM8900_REG_POWER1,
+			     WM8900_REG_POWER1_BIAS_ENA | 0x5 | 0x10);
+		wm8900_write(codec, WM8900_REG_POWER2,
+			     0xC1FF);
+		wm8900_write(codec, WM8900_REG_POWER3, 0x60);
+		/*
+		wm8900_write(codec, WM8900_REG_POWER2,
 			     WM8900_REG_POWER2_SYSCLK_ENA);
-		snd_soc_write(codec, WM8900_REG_POWER3, 0);
+		*/
+		/*
+		wm8900_write(codec, WM8900_REG_POWER3, 0);
+		*/
 		break;
 
 	case SND_SOC_BIAS_OFF:
+		if (!from_internal_flag) {
+			/* under power-off process */
+			/* mute enable */
+     		GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~BIT5;
+			
+			reg = wm8900_read(wm8900_codec, WM8900_REG_HPCTL1);
+
+			/*pre power down*/
+			/* Short the output */
+			reg |= WM8900_REG_HPCTL1_HP_SHORT;
+			wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, reg);
+
+			/* Disable the output stage */
+			reg &= ~WM8900_REG_HPCTL1_HP_OPSTAGE_ENA;
+			wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, reg);
+
+			/* Clamp the outputs and power down input */
+			reg |= (WM8900_REG_HPCTL1_HP_CLAMP_IP | WM8900_REG_HPCTL1_HP_CLAMP_OP);
+			reg &= ~WM8900_REG_HPCTL1_HP_IPSTAGE_ENA;
+			wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, reg);
+		}
+		
 		/* Startup bias enable */
-		reg = snd_soc_read(codec, WM8900_REG_POWER1);
-		snd_soc_write(codec, WM8900_REG_POWER1,
+		reg = wm8900_read(codec, WM8900_REG_POWER1);
+		wm8900_write(codec, WM8900_REG_POWER1,
 			     reg & WM8900_REG_POWER1_STARTUP_BIAS_ENA);
-		snd_soc_write(codec, WM8900_REG_ADDCTL,
+
+		wm8900_write(codec, WM8900_REG_ADDCTL,
 			     WM8900_REG_ADDCTL_BIAS_SRC |
 			     WM8900_REG_ADDCTL_VMID_SOFTST);
 
 		/* Discharge caps */
-		snd_soc_write(codec, WM8900_REG_POWER1,
+		wm8900_write(codec, WM8900_REG_POWER1,
 			     WM8900_REG_POWER1_STARTUP_BIAS_ENA);
 		schedule_timeout_interruptible(msecs_to_jiffies(500));
 
 		/* Remove clamp */
-		snd_soc_write(codec, WM8900_REG_HPCTL1, 0);
+		wm8900_write(codec, WM8900_REG_HPCTL1, 0);
 
 		/* Power down */
-		snd_soc_write(codec, WM8900_REG_ADDCTL, 0);
-		snd_soc_write(codec, WM8900_REG_POWER1, 0);
-		snd_soc_write(codec, WM8900_REG_POWER2, 0);
-		snd_soc_write(codec, WM8900_REG_POWER3, 0);
+		wm8900_write(codec, WM8900_REG_ADDCTL, 0);
+		wm8900_write(codec, WM8900_REG_POWER1, 0);
+		wm8900_write(codec, WM8900_REG_POWER2, 0);
+		wm8900_write(codec, WM8900_REG_POWER3, 0);
 
 		/* Need to let things settle before stopping the clock
 		 * to ensure that restart works, see "Stopping the
 		 * master clock" in the datasheet. */
 		schedule_timeout_interruptible(msecs_to_jiffies(1));
-		snd_soc_write(codec, WM8900_REG_POWER2,
-			     WM8900_REG_POWER2_SYSCLK_ENA);
+
+		if (!from_internal_flag) {
+			/* under power-off process */
+			/* Disable everything */
+			wm8900_write(wm8900_codec, WM8900_REG_HPCTL1, 0);
+		}
 		break;
 	}
 	codec->bias_level = level;
+	from_internal_flag = 0;
+	
 	return 0;
 }
 
@@ -1133,12 +1511,18 @@ static int wm8900_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
 	struct snd_soc_codec *codec = socdev->card->codec;
+
+	DBG_DETAIL();
+
+	/*
 	struct wm8900_priv *wm8900 = codec->private_data;
 	int fll_out = wm8900->fll_out;
 	int fll_in  = wm8900->fll_in;
 	int ret;
+	*/
 
 	/* Stop the FLL in an orderly fashion */
+	/*
 	ret = wm8900_set_fll(codec, 0, 0, 0);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to stop FLL\n");
@@ -1147,9 +1531,14 @@ static int wm8900_suspend(struct platform_device *pdev, pm_message_t state)
 
 	wm8900->fll_out = fll_out;
 	wm8900->fll_in = fll_in;
+	*/
 
+	from_internal_flag = 1;
+
+	/* mute enable */
+	GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~BIT5;
 	wm8900_set_bias_level(codec, SND_SOC_BIAS_OFF);
-
+	
 	return 0;
 }
 
@@ -1157,17 +1546,29 @@ static int wm8900_resume(struct platform_device *pdev)
 {
 	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
 	struct snd_soc_codec *codec = socdev->card->codec;
+	/*
 	struct wm8900_priv *wm8900 = codec->private_data;
+	*/
 	u16 *cache;
-	int i, ret;
+	int i;
+
+	DBG_DETAIL();
+
+	/* enable GPIO function of Suspend GPIO#0 for audio mute gpio */
+	GPIO_CTRL_GP2_WAKEUP_SUS_BYTE_VAL |= BIT5;
+	GPIO_OC_GP2_WAKEUP_SUS_BYTE_VAL |= BIT5;
+
+	/* mute enable */
+	GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~BIT5;
+	wmt_hw_mute = 1;
 
 	cache = kmemdup(codec->reg_cache, sizeof(wm8900_reg_defaults),
 			GFP_KERNEL);
 
 	wm8900_reset(codec);
-	wm8900_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
-
+	
 	/* Restart the FLL? */
+	/*
 	if (wm8900->fll_out) {
 		int fll_out = wm8900->fll_out;
 		int fll_in  = wm8900->fll_in;
@@ -1181,18 +1582,19 @@ static int wm8900_resume(struct platform_device *pdev)
 			return ret;
 		}
 	}
+	*/
 
 	if (cache) {
 		for (i = 0; i < WM8900_MAXREG; i++)
-			snd_soc_write(codec, i, cache[i]);
+			wm8900_write(codec, i, cache[i]);
 		kfree(cache);
 	} else
 		dev_err(&pdev->dev, "Unable to allocate register cache\n");
 
+	wm8900_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+
 	return 0;
 }
-
-static struct snd_soc_codec *wm8900_codec;
 
 static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 				      const struct i2c_device_id *id)
@@ -1201,6 +1603,39 @@ static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 	struct snd_soc_codec *codec;
 	unsigned int reg;
 	int ret;
+	char buf[80];
+	//int varlen = 80;
+
+	DBG_DETAIL();
+
+	memset(buf, 0, sizeof(buf));
+	wm8900_env.enable_flag = 0;
+
+#if 0
+	if (wmt_getsyspara("wmt.audio.reg", buf, &varlen)) {
+		info("Can't get wmt.audio.reg in u-boot!");
+	}
+	else {
+		ret = sscanf(buf, "%04x:%04x:%04x",
+					(unsigned int *)&wm8900_env.REG_LINVOL,
+					(unsigned int *)&wm8900_env.REG_RINVOL,
+					(unsigned int *)&wm8900_env.REG_ADCPATH);
+		
+		if (ret != 3) {
+			info("wmt.audio.reg format error in u-boot!");
+			info("ex: wmt.audio.reg xxxx:xxxx:xxxx");
+			wm8900_env.enable_flag = 0;
+		}
+		else {
+			wm8900_env.enable_flag = 1;
+		}
+	}
+
+	info("REG_LINVOL=0x%04x, REG_RINVOL=0x%04x, REG_ADCPATH=0x%04x",
+					wm8900_env.REG_LINVOL,
+					wm8900_env.REG_RINVOL,
+					wm8900_env.REG_ADCPATH);
+#endif	
 
 	wm8900 = kzalloc(sizeof(struct wm8900_priv), GFP_KERNEL);
 	if (wm8900 == NULL)
@@ -1217,20 +1652,17 @@ static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 
 	codec->name = "WM8900";
 	codec->owner = THIS_MODULE;
+	codec->read = wm8900_read;
+	codec->write = wm8900_write;
 	codec->dai = &wm8900_dai;
 	codec->num_dai = 1;
+	codec->hw_write = (hw_write_t)i2c_master_send;
 	codec->control_data = i2c;
 	codec->set_bias_level = wm8900_set_bias_level;
 	codec->volatile_register = wm8900_volatile_register;
 	codec->dev = &i2c->dev;
 
-	ret = snd_soc_codec_set_cache_io(codec, 8, 16, SND_SOC_I2C);
-	if (ret != 0) {
-		dev_err(&i2c->dev, "Failed to set cache I/O: %d\n", ret);
-		goto err;
-	}
-
-	reg = snd_soc_read(codec, WM8900_REG_ID);
+	reg = wm8900_read(codec, WM8900_REG_ID);
 	if (reg != 0x8900) {
 		dev_err(&i2c->dev, "Device is not a WM8900 - ID %x\n", reg);
 		ret = -ENODEV;
@@ -1238,39 +1670,100 @@ static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 	}
 
 	/* Read back from the chip */
-	reg = snd_soc_read(codec, WM8900_REG_POWER1);
+	reg = wm8900_chip_read(codec, WM8900_REG_POWER1);
 	reg = (reg >> 12) & 0xf;
 	dev_info(&i2c->dev, "WM8900 revision %d\n", reg);
 
 	wm8900_reset(codec);
-
 	/* Turn the chip on */
-	wm8900_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	wm8900_set_bias_level(codec, SND_SOC_BIAS_ON);
 
 	/* Latch the volume update bits */
-	snd_soc_write(codec, WM8900_REG_LINVOL,
-		      snd_soc_read(codec, WM8900_REG_LINVOL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_RINVOL,
-		      snd_soc_read(codec, WM8900_REG_RINVOL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_LOUT1CTL,
-		      snd_soc_read(codec, WM8900_REG_LOUT1CTL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_ROUT1CTL,
-		      snd_soc_read(codec, WM8900_REG_ROUT1CTL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_LOUT2CTL,
-		      snd_soc_read(codec, WM8900_REG_LOUT2CTL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_ROUT2CTL,
-		      snd_soc_read(codec, WM8900_REG_ROUT2CTL) | 0x100);
-	snd_soc_write(codec, WM8900_REG_LDAC_DV,
-		      snd_soc_read(codec, WM8900_REG_LDAC_DV) | 0x100);
-	snd_soc_write(codec, WM8900_REG_RDAC_DV,
-		      snd_soc_read(codec, WM8900_REG_RDAC_DV) | 0x100);
-	snd_soc_write(codec, WM8900_REG_LADC_DV,
-		      snd_soc_read(codec, WM8900_REG_LADC_DV) | 0x100);
-	snd_soc_write(codec, WM8900_REG_RADC_DV,
-		      snd_soc_read(codec, WM8900_REG_RADC_DV) | 0x100);
+	wm8900_write(codec, WM8900_REG_LINVOL,
+		     wm8900_read(codec, WM8900_REG_LINVOL) | 0x100);
+	wm8900_write(codec, WM8900_REG_RINVOL,
+		     wm8900_read(codec, WM8900_REG_RINVOL) | 0x100);
+	wm8900_write(codec, WM8900_REG_LOUT1CTL,
+		     wm8900_read(codec, WM8900_REG_LOUT1CTL) | 0x100);
+	wm8900_write(codec, WM8900_REG_ROUT1CTL,
+		     wm8900_read(codec, WM8900_REG_ROUT1CTL) | 0x100);
+	wm8900_write(codec, WM8900_REG_LOUT2CTL,
+		     wm8900_read(codec, WM8900_REG_LOUT2CTL) | 0x100);
+	wm8900_write(codec, WM8900_REG_ROUT2CTL,
+		     wm8900_read(codec, WM8900_REG_ROUT2CTL) | 0x100);
+	/*wm8900_write(codec, WM8900_REG_LDAC_DV,
+		     wm8900_read(codec, WM8900_REG_LDAC_DV) | 0x100);
+	wm8900_write(codec, WM8900_REG_RDAC_DV,
+		     wm8900_read(codec, WM8900_REG_RDAC_DV) | 0x100);*/
+	wm8900_write(codec, WM8900_REG_LADC_DV,
+		     wm8900_read(codec, WM8900_REG_LADC_DV) | 0x100);
+	wm8900_write(codec, WM8900_REG_RADC_DV,
+		     wm8900_read(codec, WM8900_REG_RADC_DV) | 0x100);
+	
+	/* enable Stereo DAC to HeadPhone signal path */
+	wm8900_write(codec, WM8900_REG_HPCTL1, 0x0030);
+	wm8900_write(codec, WM8900_REG_ADDCTL, 0x0082);
+	wm8900_write(codec, WM8900_REG_POWER1, 0x0100);
+	wm8900_write(codec, WM8900_REG_ADDCTL, 0x009a);
+	wm8900_write(codec, WM8900_REG_POWER3, 0x0060);
+	wm8900_write(codec, WM8900_REG_ADDCTL, 0x001a);
+	wm8900_write(codec, WM8900_REG_POWER1, 0x0101);
+	
+	mdelay(400);
+	
+	wm8900_write(codec, WM8900_REG_POWER1, 0x0109);
+	wm8900_write(codec, WM8900_REG_ADDCTL, 0x0002);
+	wm8900_write(codec, WM8900_REG_POWER1, 0x0009);
 
-	/* Set the DAC and mixer output bias */
-	snd_soc_write(codec, WM8900_REG_OUTBIASCTL, 0x81);
+	wm8900_write(codec, WM8900_REG_LOUTMIXCTL1, 0x0150);
+	wm8900_write(codec, WM8900_REG_ROUTMIXCTL1, 0x0150);
+
+	wm8900_write(codec, WM8900_REG_DACCTRL, 0x0000);
+
+	/* enable linout 1 : 0dB */
+	wm8900_write(codec, WM8900_REG_LOUT1CTL, 0x01B9);
+	wm8900_write(codec, WM8900_REG_ROUT1CTL, 0x01B9);
+
+	/* enable headphone : 0dB */
+	wm8900_write(codec, WM8900_REG_LOUT2CTL, 0x01B9);
+	wm8900_write(codec, WM8900_REG_ROUT2CTL, 0x01B9);
+	
+	mdelay(400);
+	
+	/* enable MIC Input to Stereo ADC signal path */
+	wm8900_write(codec, WM8900_REG_POWER1, 0x001D);
+	wm8900_write(codec, WM8900_REG_POWER2, 0xC1BF);
+
+	/* set input PGA volume to 13dB by default */
+	if (wm8900_env.enable_flag) {
+		wm8900_write(codec, WM8900_REG_LINVOL, wm8900_env.REG_LINVOL);
+		wm8900_write(codec, WM8900_REG_RINVOL, wm8900_env.REG_RINVOL);
+	}
+	else {
+		wm8900_write(codec, WM8900_REG_LINVOL, 0x0119);
+		wm8900_write(codec, WM8900_REG_RINVOL, 0x0119);
+	}
+
+	/* connect LR input PGA to input boost, 20dB boost gain by default */
+	if (wm8900_env.enable_flag) {
+		wm8900_write(codec, WM8900_REG_ADCPATH, wm8900_env.REG_ADCPATH);
+	}
+	else {
+		wm8900_write(codec, WM8900_REG_ADCPATH, 0x0066);
+	}
+
+	/* set ADC digital volume to 17.625dB */
+	wm8900_write(codec, WM8900_REG_LADC_DV, 0x01EF);
+	wm8900_write(codec, WM8900_REG_RADC_DV, 0x01EF);
+
+	/* disable IN1L_ENA & IN1R_ENA */
+	wm8900_write(codec, WM8900_REG_INCTL, 0x0);
+
+	/* enable high pass filter and set to voice mode 2 */
+	wm8900_write(codec, WM8900_REG_ADCCTRL, 0x140);
+	
+	/* Set the DAC and Mixer Output bias to Half bias */
+	wm8900_write(codec, WM8900_REG_OUTBIASCTL, 0x81);
 
 	wm8900_dai.dev = &i2c->dev;
 
@@ -1288,6 +1781,15 @@ static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 		goto err_codec;
 	}
 
+	INIT_WORK(&wm8900_work, wm8900_work_func);
+
+	wm8900_workqueue = create_singlethread_workqueue("wm8900");
+	if (NULL == wm8900_workqueue) {
+		ret = -ENXIO;
+		dev_err(&i2c->dev, "wm8900 create workqueue failed!\n");
+		goto err;
+	}
+
 	return ret;
 
 err_codec:
@@ -1295,6 +1797,8 @@ err_codec:
 err:
 	kfree(wm8900);
 	wm8900_codec = NULL;
+	if (wm8900_workqueue)
+		destroy_workqueue(wm8900_workqueue);
 	return ret;
 }
 
@@ -1303,6 +1807,9 @@ static __devexit int wm8900_i2c_remove(struct i2c_client *client)
 	snd_soc_unregister_dai(&wm8900_dai);
 	snd_soc_unregister_codec(wm8900_codec);
 
+	DBG_DETAIL();
+
+	from_internal_flag = 1;
 	wm8900_set_bias_level(wm8900_codec, SND_SOC_BIAS_OFF);
 
 	wm8900_dai.dev = NULL;
@@ -1311,21 +1818,6 @@ static __devexit int wm8900_i2c_remove(struct i2c_client *client)
 
 	return 0;
 }
-
-#ifdef CONFIG_PM
-static int wm8900_i2c_suspend(struct i2c_client *client, pm_message_t msg)
-{
-	return snd_soc_suspend_device(&client->dev);
-}
-
-static int wm8900_i2c_resume(struct i2c_client *client)
-{
-	return snd_soc_resume_device(&client->dev);
-}
-#else
-#define wm8900_i2c_suspend NULL
-#define wm8900_i2c_resume NULL
-#endif
 
 static const struct i2c_device_id wm8900_i2c_id[] = {
 	{ "wm8900", 0 },
@@ -1339,9 +1831,7 @@ static struct i2c_driver wm8900_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = wm8900_i2c_probe,
-	.remove = __devexit_p(wm8900_i2c_remove),
-	.suspend = wm8900_i2c_suspend,
-	.resume = wm8900_i2c_resume,
+	.remove = wm8900_i2c_remove,
 	.id_table = wm8900_i2c_id,
 };
 
@@ -1351,6 +1841,8 @@ static int wm8900_probe(struct platform_device *pdev)
 	struct snd_soc_codec *codec;
 	int ret = 0;
 
+	DBG_DETAIL();
+	
 	if (!wm8900_codec) {
 		dev_err(&pdev->dev, "I2C client not yet instantiated\n");
 		return -ENODEV;
@@ -1366,8 +1858,11 @@ static int wm8900_probe(struct platform_device *pdev)
 		goto pcm_err;
 	}
 
+	/*
 	snd_soc_add_controls(codec, wm8900_snd_controls,
 				ARRAY_SIZE(wm8900_snd_controls));
+	*/
+	wm8900_add_controls(codec);
 	wm8900_add_widgets(codec);
 
 	ret = snd_soc_init_card(socdev);
@@ -1376,6 +1871,13 @@ static int wm8900_probe(struct platform_device *pdev)
 		goto card_err;
 	}
 
+	/* enable GPIO function of Suspend GPIO#0 for audio mute gpio */
+	GPIO_CTRL_GP2_WAKEUP_SUS_BYTE_VAL |= BIT5;
+	GPIO_OC_GP2_WAKEUP_SUS_BYTE_VAL |= BIT5;
+
+	/* mute enable */
+	GPIO_OD_GP2_WAKEUP_SUS_BYTE_VAL &= ~BIT5;
+	
 	return ret;
 
 card_err:
@@ -1390,6 +1892,8 @@ static int wm8900_remove(struct platform_device *pdev)
 {
 	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
 
+	DBG_DETAIL();
+	
 	snd_soc_free_pcms(socdev);
 	snd_soc_dapm_free(socdev);
 
@@ -1404,14 +1908,79 @@ struct snd_soc_codec_device soc_codec_dev_wm8900 = {
 };
 EXPORT_SYMBOL_GPL(soc_codec_dev_wm8900);
 
+static struct i2c_board_info wm8900_i2c_board_info[] = {
+	{
+		.type		= "wm8900",
+		.addr		= 0x1B,
+	},
+};
+
+
 static int __init wm8900_modinit(void)
 {
+	struct i2c_adapter *adapter = NULL;
+	char buf[80];
+	int varlen = 80;
+	unsigned int wm8900_i2c_bus_id = 0;
+	int ret = 0;
+	char codec_name[6];
+	
+	DBG_DETAIL();
+
+	/* Read u-boot parameter to decide i2c bus number for wm8900 */
+	ret = wmt_getsyspara("wmt.audio.i2s", buf, &varlen);
+	
+	if (ret == 0) {
+		sscanf(buf, "%6s", codec_name);
+
+		if (strcmp(codec_name, "wm8900")) {
+			info("wm8900 string not found");
+			return -EINVAL;
+		}	
+		
+		sscanf(buf, "wm8900:%x", &wm8900_i2c_bus_id);
+
+		if (wm8900_i2c_bus_id == 0xf0) {
+			wm8900_i2c_bus_id = 0;
+		} 
+		else if (wm8900_i2c_bus_id == 0xf1) {
+			wm8900_i2c_bus_id = 1;
+		} 
+		else {
+			info("[i2cbus] invalid. set i2cbus->0");
+			wm8900_i2c_bus_id = 0;
+		}
+	}
+	else {
+		info("wmt.audio.i2s not set");
+	}	
+
+	info("I2C BusId=%d", wm8900_i2c_bus_id);
+		
+	adapter = i2c_get_adapter(wm8900_i2c_bus_id);
+	if (adapter == NULL) {
+		err("can not get i2c adapter, client address error");
+		return -ENODEV;
+	}
+	
+	if (i2c_new_device(adapter, wm8900_i2c_board_info) == NULL) {
+		err("allocate i2c client failed");
+		return -ENOMEM;
+	}
+	
+	i2c_put_adapter(adapter);
+	
 	return i2c_add_driver(&wm8900_i2c_driver);
 }
 module_init(wm8900_modinit);
 
 static void __exit wm8900_exit(void)
 {
+	DBG_DETAIL();
+
+	if (wm8900_workqueue)
+		destroy_workqueue(wm8900_workqueue);
+	
 	i2c_del_driver(&wm8900_i2c_driver);
 }
 module_exit(wm8900_exit);

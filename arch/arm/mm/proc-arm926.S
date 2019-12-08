@@ -448,8 +448,8 @@ cpu_arm926_name:
 
 	.type	__arm926_proc_info,#object
 __arm926_proc_info:
-	.long	0x41069260			@ ARM926EJ-S (v5TEJ)
-	.long	0xff0ffff0
+        .long	0x41069265           @wm8605
+	.long	0xffffffff
 	.long   PMD_TYPE_SECT | \
 		PMD_SECT_BUFFERABLE | \
 		PMD_SECT_CACHEABLE | \

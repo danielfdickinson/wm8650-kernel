@@ -9,3 +9,4 @@ obj-$(CONFIG_I2C_ALGOPCA)	+= i2c-algo-pca.o
 ifeq ($(CONFIG_I2C_DEBUG_ALGO),y)
 EXTRA_CFLAGS += -DDEBUG
 endif
+obj-$(CONFIG_I2C_WMT)	+= wmt-i2c-algo.o

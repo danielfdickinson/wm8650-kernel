@@ -2,6 +2,7 @@
 # Makefile for the linux kernel.
 #
 
+obj-y				+= platform.o   pci.o pci_wmt.o
 obj-$(CONFIG_ARM_GIC)		+= gic.o
 obj-$(CONFIG_ARM_VIC)		+= vic.o
 obj-$(CONFIG_ICST525)		+= icst525.o

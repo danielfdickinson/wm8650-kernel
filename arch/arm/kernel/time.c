@@ -30,26 +30,28 @@
 #include <linux/timer.h>
 #include <linux/irq.h>
 
-#include <linux/mc146818rtc.h>
-
 #include <asm/leds.h>
 #include <asm/thread_info.h>
 #include <asm/stacktrace.h>
 #include <asm/mach/time.h>
+#include <asm/ltt.h>
+#include <asm/irq.h>
+#include <asm/mach/irq.h>
+
+#include <linux/rtc.h>
+#include <mach/hardware.h>
 
 /*
  * Our system timer.
  */
 struct sys_timer *system_timer;
 
-#if defined(CONFIG_RTC_DRV_CMOS) || defined(CONFIG_RTC_DRV_CMOS_MODULE)
 /* this needs a better home */
 DEFINE_SPINLOCK(rtc_lock);
 
-#ifdef CONFIG_RTC_DRV_CMOS_MODULE
+#ifdef CONFIG_SA1100_RTC_MODULE
 EXPORT_SYMBOL(rtc_lock);
 #endif
-#endif	/* pc-style 'CMOS' RTC support */
 
 /* change this if you have some constant time drift */
 #define USECS_PER_JIFFY	(1000000/HZ)
@@ -87,7 +89,18 @@ static unsigned long dummy_gettimeoffset(void)
 {
 	return 0;
 }
+unsigned long (*gettimeoffset)(void) = dummy_gettimeoffset;
 #endif
+
+/*
+ * Scheduler clock - returns current time in nanosec units.
+ * This is the default implementation.  Sub-architecture
+ * implementations can override this.
+ */
+unsigned long long __attribute__((weak)) sched_clock(void)
+{
+	return (unsigned long long)jiffies * (1000000000 / HZ);
+}
 
 static unsigned long next_rtc_update;
 
@@ -224,16 +237,23 @@ EXPORT_SYMBOL(leds_event);
 #ifdef CONFIG_LEDS_TIMER
 static inline void do_leds(void)
 {
-	static unsigned int count = HZ/2;
+	static unsigned int count = 50;
 
 	if (--count == 0) {
-		count = HZ/2;
+		count = 50;
 		leds_event(led_timer);
 	}
 }
 #else
 #define	do_leds()
 #endif
+
+void arch_tick_leds(void)
+{
+#ifdef CONFIG_LEDS_TIMER
+	do_leds();
+#endif
+}
 
 #ifndef CONFIG_GENERIC_TIME
 void do_gettimeofday(struct timeval *tv)
@@ -338,6 +358,9 @@ void timer_tick(void)
 	write_seqlock(&xtime_lock);
 	do_timer(1);
 	write_sequnlock(&xtime_lock);
+#ifdef CONFIG_LTT
+	ltt_reset_timestamp();
+#endif
 #ifndef CONFIG_SMP
 	update_process_times(user_mode(get_irq_regs()));
 #endif
@@ -503,6 +526,8 @@ static int __init timer_init_sysfs(void)
 
 device_initcall(timer_init_sysfs);
 
+/* have defined in next wmt section */
+#if 0
 void __init time_init(void)
 {
 #ifndef CONFIG_GENERIC_TIME
@@ -510,5 +535,345 @@ void __init time_init(void)
 		system_timer->offset = dummy_gettimeoffset;
 #endif
 	system_timer->init();
+
+#ifdef CONFIG_NO_IDLE_HZ
+	if (system_timer->dyn_tick)
+		system_timer->dyn_tick->lock = SPIN_LOCK_UNLOCKED;
+#endif
 }
 
+#endif
+
+/*
+ * wmt timer
+ *
+ * Please place it to linux/asm-arm/mach-wmt/time.c later
+ *  */
+
+extern atomic_t *prof_buffer;
+extern unsigned long prof_len, prof_shift;
+
+#define RTC_DEF_DIVIDER			(32768 - 1)
+
+extern void rtc_time_to_tm(unsigned long, struct rtc_time *);
+
+/* wmt_read_oscr()
+ *
+ * Return the current count of OS Timer.
+ *
+ * Note: This function will be call by other driver such as hwtimer
+ *       or watchdog, but we don't recommand you to include this header,
+ *       instead with using extern...
+ *       Move it to other appropriate place if you have any good idea.
+ */
+inline unsigned int wmt_read_oscr(void)
+{
+	/*
+	 * Request the reading of OS Timer Count Register.
+	 */
+	OSTC_VAL |= OSTC_RDREQ;
+
+	/*
+	 * Polling until free to reading.
+	 * Although it looks dangerous, we have to do this.
+	 * That means if this bit not worked, ostimer fcuntion
+	 * might be not working, Apr.04.2005 by Harry.
+	 */
+	while (OSTA_VAL & OSTA_RCA)
+		;
+
+	return OSCR_VAL;
+}
+
+EXPORT_SYMBOL(wmt_read_oscr);
+
+inline void wmt_read_rtc(unsigned int *date, unsigned int *time)
+{
+	if (!(RTSR_VAL&RTSR_VAILD))
+		while (!(RTSR_VAL&RTSR_VAILD))
+			;
+
+	if (RTWS_VAL & RTWS_DATESET)
+		while (RTWS_VAL & RTWS_DATESET)
+			;
+
+	*date = RTCD_VAL;
+
+	if (RTWS_VAL & RTWS_TIMESET)
+		while (RTWS_VAL & RTWS_TIMESET)
+			;
+
+	*time = RTCT_VAL;
+}
+
+EXPORT_SYMBOL(wmt_read_rtc);
+
+/* wmt_get_rtc_time()
+ *
+ * This function is using for kernel booting stage.
+ * Its purpose is getting the time information from the RTC,
+ * and then update the kernel time spec.
+ * For example, in wmt RTC, its default RTC is starting
+ * from Jan.01.2000 00.00.00, so you can see properly info
+ * using 'date' command after booted.
+ */
+static unsigned long __init wmt_get_rtc_time(void)
+{
+	unsigned int date, time;
+
+	wmt_read_rtc(&date, &time);
+
+	return mktime(RTCD_YEAR(date) + ((RTCD_CENT(date) * 100) + 100),
+				  RTCD_MON(date),
+				  RTCD_MDAY(date),
+				  RTCT_HOUR(time),
+				  RTCT_MIN(time),
+				  RTCT_SEC(time));
+}
+
+/*
+ * This function is using for kernel to update
+ * RTC accordingly every ~11 minutes.
+ */
+static int wmt_set_rtc(void)
+{
+	int ret = 0;
+	unsigned int value;
+	unsigned long current_time = xtime.tv_sec;
+	struct rtc_time now_tm;
+
+	/*
+	 * Convert seconds since 01-01-1970 00:00:00 to Gregorian date.
+	 */
+	rtc_time_to_tm(current_time, &now_tm);
+
+	value = RTTS_SEC(now_tm.tm_sec) | RTTS_MIN(now_tm.tm_min) | \
+		RTTS_HOUR(now_tm.tm_hour) | RTTS_DAY(now_tm.tm_wday);
+
+	if ((RTWS_VAL & RTWS_TIMESET) == 0) {   /* write free */
+		RTTS_VAL = (value & RTTS_TIME);
+	} else {
+		ret = -EBUSY;
+	}
+
+	if (ret)
+		goto out;
+
+	value = RTDS_MDAY(now_tm.tm_mday) | RTDS_MON(now_tm.tm_mon) | \
+		RTDS_YEAR(now_tm.tm_year%100) | RTDS_CENT((now_tm.tm_year/100) - 1);
+
+	if ((RTWS_VAL & RTWS_DATESET) == 0) {   /* write free */
+		RTDS_VAL = (value & RTDS_DATE);
+	} else {
+		/* printk("rtc_err : date set register write busy!\n"); */
+		ret = -EBUSY;
+	}
+
+out:
+	return ret;
+}
+
+/*
+ * IRQs are disabled before entering here from do_gettimeofday()
+ */
+static unsigned long wmt_gettimeoffset(void)
+{
+	unsigned long ticks_to_match, elapsed, usec;
+
+	/* Get ticks before next timer match */
+	ticks_to_match = OSM1_VAL - (unsigned long)wmt_read_oscr();
+
+	/* We need elapsed ticks since last match */
+	elapsed = LATCH - ticks_to_match;
+
+	/* Now convert them to usec */
+	usec = (unsigned long)(elapsed * (tick_nsec / 1000))/LATCH;
+
+	return usec;
+}
+
+/*
+ * Handle kernel profile stuff...
+ */
+static inline void do_profile(struct pt_regs *regs)
+{
+	if (!user_mode(regs) && prof_buffer && current->pid) {
+		unsigned long pc = instruction_pointer(regs);
+		extern int _stext;
+
+		pc -= (unsigned long)&_stext;
+
+		pc >>= prof_shift;
+
+		if (pc >= prof_len)
+			pc = prof_len - 1;
+
+		atomic_inc(&prof_buffer[pc]);
+
+		/* prof_buffer[pc] += 1; */
+	}
+}
+
+static irqreturn_t
+wmt_timer_interrupt(int irq, void *dev_id)
+{
+	unsigned int next_match;
+
+	do {
+		do_leds();
+		timer_tick();
+
+		/* Clear match on OS Timer 1 */
+		OSTS_VAL = OSTS_M1;
+		next_match = (OSM1_VAL += LATCH);
+		do_set_rtc();
+	} while ((signed long)(next_match - wmt_read_oscr()) <= 0);
+
+	/* TODO: add do_profile()  */
+//	do_profile(regs);
+
+	return IRQ_HANDLED;
+}
+
+static struct irqaction wmt_timer_irq = {
+	.name	  = "timer",
+	.flags	  = IRQF_DISABLED | IRQF_TIMER,
+	.handler  = wmt_timer_interrupt,
+};
+
+/* rtc_init()
+ *
+ * This function is using for kernel booting stage.
+ * Its purpose is initialising the RTC.
+ * In wmt, we need to check whether AHB clock to RTC
+ * is avtive or not, so that we can access RTC registers.
+ *
+ * Notice that we assume we don't know whether the kernel
+ * is booting from bootloader within RTC function or not,
+ * So we have to do some more checking to make sure RTCD
+ * is synchronizing with RTDS register.
+ */
+static void __init rtc_init(void)
+{
+	RTCC_VAL = (RTCC_ENA|RTCC_INTTYPE);
+	if (!(RTSR_VAL&RTSR_VAILD))
+		while (!(RTSR_VAL&RTSR_VAILD))
+			;
+
+	RTAS_VAL = 0; /* Reset RTC alarm settings */
+	RTTM_VAL = 0; /* Reset RTC test mode. */
+
+	/* Patch 1, RTCD default value isn't 0x41 and it will not sync with RTDS. */
+	if (RTCD_VAL == 0) {
+		while (RTWS_VAL & RTWS_DATESET)
+			;
+		RTDS_VAL = RTDS_VAL;
+	}
+
+	/*
+	 * Disable all RTC control functions.
+	 * Set to 24-hr format and update type to each second.
+	 * Disable sec/min update interrupt.
+	 * Let RTC free run without interrupts.
+	 */
+	/* RTCC_VAL &= ~(RTCC_12HR | RTCC_INTENA); */
+	/* RTCC_VAL |= RTCC_ENA | RTCC_INTTYPE; */
+	RTCC_VAL = (RTCC_ENA|RTCC_INTTYPE);
+
+	if (RTWS_VAL & RTWS_CONTROL) {
+		while (RTWS_VAL & RTWS_CONTROL)
+			;
+	}
+}
+
+/* time_init()
+ *
+ * This function is using for kernel booting stage.
+ * Its purpose is initialising ostimer and RTC.
+ */
+void __init time_init(void)
+{
+	unsigned int i = 0;
+	struct timespec tv;
+
+	if (system_timer->offset == NULL)
+		system_timer->offset = dummy_gettimeoffset;
+
+	/* system_timer->init(); */
+	/* Stop ostimer. */
+	OSTC_VAL = 0;
+
+	/* Init RTC, A0,A1 has RTC hardware bug */
+	if ((*(volatile unsigned int *)0xd8120000)>0x34260102) {
+        rtc_init();
+        gettimeoffset   = wmt_gettimeoffset;
+        set_rtc         = wmt_set_rtc;               /* draft, need to verify */
+
+        tv.tv_nsec      = 0;
+        tv.tv_sec       = wmt_get_rtc_time();
+    } else {
+        gettimeoffset   = wmt_gettimeoffset;
+        //set_rtc         = wmt_set_rtc;               /* draft, need to verify */
+        tv.tv_nsec      = 0;
+        tv.tv_sec       = 0;
+    }
+
+	do_settimeofday(&tv);
+
+	/* Set initial match */
+	while (OSTA_VAL & OSTA_MWA1)
+		;
+	OSM1_VAL = 0;
+
+	/* Clear status on all timers. */
+	OSTS_VAL = OSTS_MASK;     /* 0xF */
+
+	/* Use OS Timer 1 as kernel timer because watchdog may use OS Timer 0. */
+	i = setup_irq(IRQ_OST1, &wmt_timer_irq);
+
+	/* Enable match on timer 1 to cause interrupts. */
+	OSTI_VAL |= OSTI_E1;
+
+	/* Let OS Timer free run. */
+	OSTC_VAL = OSTC_ENABLE;
+
+	/* Initialize free-running timer and force first match. */
+	while (OSTA_VAL & OSTA_CWA)
+		;
+	OSCR_VAL = 0;
+}
+
+/*
+ * Temporary trick to reduce the in-consistency between kernel and RTC time
+ */
+static int __init time_calibrate(void)
+{
+	struct timespec tv;
+
+	if ((*(volatile unsigned int *)0xd8120000)>0x34260102) {    
+        tv.tv_nsec      = 0;
+        tv.tv_sec       = wmt_get_rtc_time();
+    } else {
+        tv.tv_nsec      = 0;
+        tv.tv_sec       = 0;
+    }
+
+    do_settimeofday(&tv);
+
+	return 0;
+}
+
+late_initcall(time_calibrate);
+
+struct sys_timer wmt_timer = {
+	.init		= time_init,
+	.offset		= wmt_gettimeoffset,
+};
+
+EXPORT_SYMBOL(wmt_timer);
+
+/* TODO: add timer PM
+ *       CONFIG_NO_IDLE_HZ
+ *       irqaction
+ *       do_profile
+ */

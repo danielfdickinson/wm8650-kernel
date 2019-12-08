@@ -17,14 +17,22 @@ config FB_LOGO_EXTRA
 
 config LOGO_LINUX_MONO
 	bool "Standard black and white Linux logo"
+	depends on LOGO
 	default y
 
 config LOGO_LINUX_VGA16
 	bool "Standard 16-color Linux logo"
+	depends on LOGO
 	default y
 
 config LOGO_LINUX_CLUT224
 	bool "Standard 224-color Linux logo"
+	depends on LOGO
+	default y
+
+config LOGO_WMT_ANIMATION
+	bool "WMT Bootup animation logo"
+    depends on FB_WMT
 	default y
 
 config LOGO_BLACKFIN_VGA16

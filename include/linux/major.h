@@ -154,6 +154,7 @@
 #define USB_CHAR_MAJOR		180
 
 #define MMC_BLOCK_MAJOR		179
+#define MMC1_BLOCK_MAJOR	190
 
 #define VXVM_MAJOR		199	/* VERITAS volume i/o driver    */
 #define VXSPEC_MAJOR		200	/* VERITAS volume config driver */
@@ -170,6 +171,12 @@
 #define IBM_FS3270_MAJOR	228
 
 #define VIOTAPE_MAJOR		230
+
+#define VD_MAJOR            236   /* For all Video Decoders */
+#define XD_MAJOR			240   //add by jay
+#define VID_MAJOR           241
+
+#define MB_MAJOR            242   /* For WMT Memory Block driver */
 
 #define BLOCK_EXT_MAJOR		259
 #define SCSI_OSD_MAJOR		260	/* open-osd's OSD scsi device */

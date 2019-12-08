@@ -48,6 +48,13 @@
 const char *usbcore_name = "usbcore";
 
 static int nousb;	/* Disable USB when built into kernel image */
+#define RALINK_WIFI_ALLOC_ONCE 1
+#if RALINK_WIFI_ALLOC_ONCE
+static int drv_index=0;
+static char drv_alloced[20];
+static void *drv_vaddr[20];
+static void *drv_paddr[20];
+#endif
 
 /* Workqueue for autosuspend and for remote wakeup of root hubs */
 struct workqueue_struct *ksuspend_usb_wq;
@@ -735,6 +742,36 @@ void *usb_buffer_alloc(struct usb_device *dev, size_t size, gfp_t mem_flags,
 {
 	if (!dev || !dev->bus)
 		return NULL;
+#if RALINK_WIFI_ALLOC_ONCE
+	//printk("** USB dev = %X\n",dev->descriptor.idVendor);
+	if(dev->descriptor.idVendor == 0x13D3) {
+		void *ret_addr;
+		//int i=0;
+		//for(i=0;i<20;i++)
+		//	printk(" i:%d drv_alloced:%X drv_paddr:%X drv_vaddr:%X\n",i,drv_alloced[i],drv_paddr[i], drv_vaddr[i]);
+		//printk("** alloc wifi memory size :%X drv mem_flags:%X dma:%X drv_alloced:%X drv_vaddr:%X**\n",size, mem_flags, *dma,drv_alloced[drv_index] ,drv_vaddr[drv_index]);
+		if(drv_alloced[drv_index] == 0) {
+			drv_vaddr[drv_index] = hcd_buffer_alloc(dev->bus, size, mem_flags, dma);
+			if(drv_vaddr[drv_index] != NULL) {
+				drv_alloced[drv_index] = 1;
+				ret_addr = drv_vaddr[drv_index];
+				drv_paddr[drv_index] =(void *) *dma;
+				drv_index++;
+				//printk("** alloc return addr:%X **\n",ret_addr);
+				return ret_addr;
+			} else {
+				return NULL;
+			}
+		} else {
+			ret_addr = drv_vaddr[drv_index];
+			*dma =(dma_addr_t) drv_paddr[drv_index];
+			drv_index++;
+			//memset((unsigned char *)ret_addr,0,size);
+			//printk("** alloc return addr:%X **\n",ret_addr);
+			return ret_addr;
+		}
+	}
+#endif
 	return hcd_buffer_alloc(dev->bus, size, mem_flags, dma);
 }
 EXPORT_SYMBOL_GPL(usb_buffer_alloc);
@@ -757,6 +794,19 @@ void usb_buffer_free(struct usb_device *dev, size_t size, void *addr,
 		return;
 	if (!addr)
 		return;
+#if RALINK_WIFI_ALLOC_ONCE
+	//printk("** USB dev = %X\n",dev->descriptor.idVendor);
+	if(dev->descriptor.idVendor == 0x13D3) {
+	//if(*(volatile unsigned long *)0xd8110080 & 0x00000040) {
+		drv_index--;
+		//printk("** free wifi memory size:%X drv_index:%X dma:%X**\n",size ,drv_index, dma);
+		
+		//for(i=0;i<20;i++)
+		//	printk("** free wifi memory size :%X index:%d dma:%X drv_alloced:%X drv_vaddr:%X**\n",size,i , dma,drv_alloced[i] ,drv_vaddr[i]);
+
+		return ;
+	}
+#endif
 	hcd_buffer_free(dev->bus, size, addr, dma);
 }
 EXPORT_SYMBOL_GPL(usb_buffer_free);

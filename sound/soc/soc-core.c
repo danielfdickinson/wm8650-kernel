@@ -1048,6 +1048,22 @@ static int soc_poweroff(struct device *dev)
 	return 0;
 }
 
+static void soc_shutdown(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_card *card = socdev->card;
+	
+	if (!card->instantiated)
+		return;
+
+	/* Flush out pmdown_time work - we actually do want to run it
+	 * now, we're shutting down so no imminent restart. */
+	run_delayed_work(&card->delayed_work);
+
+	snd_soc_dapm_shutdown(socdev);
+}
+
+
 static struct dev_pm_ops soc_pm_ops = {
 	.suspend = soc_suspend,
 	.resume = soc_resume,
@@ -1063,6 +1079,7 @@ static struct platform_driver soc_driver = {
 	},
 	.probe		= soc_probe,
 	.remove		= soc_remove,
+	.shutdown	= soc_shutdown,
 };
 
 /* create a new pcm */

@@ -112,6 +112,9 @@ struct uvc_xu_control {
 #define UVC_GUID_FORMAT_YUY2 \
 	{ 'Y',  'U',  'Y',  '2', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+#define UVC_GUID_FORMAT_YUY2_ISIGHT \
+	{ 'Y',  'U',  'Y',  '2', 0x00, 0x00, 0x10, 0x00, \
+	 0x80, 0x00, 0x00, 0x00, 0x00, 0x38, 0x9b, 0x71}
 #define UVC_GUID_FORMAT_NV12 \
 	{ 'N',  'V',  '1',  '2', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
@@ -127,10 +130,12 @@ struct uvc_xu_control {
 #define UVC_GUID_FORMAT_Y800 \
 	{ 'Y',  '8',  '0',  '0', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+#define UVC_GUID_FORMAT_Y16 \
+	{ 'Y',  '1',  '6',  ' ', 0x00, 0x00, 0x10, 0x00, \
+	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
 #define UVC_GUID_FORMAT_BY8 \
 	{ 'B',  'Y',  '8',  ' ', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
-
 
 /* ------------------------------------------------------------------------
  * Driver specific constants.
@@ -146,6 +151,8 @@ struct uvc_xu_control {
 #define UVC_MAX_VIDEO_BUFFERS	32
 /* Maximum status buffer size in bytes of interrupt URB. */
 #define UVC_MAX_STATUS_SIZE	16
+/* Maximum mpeg2-ts buffer size in bytes  */ 
+#define UVC_MPEG2TS_STREAM_BUF_SIZE	8192
 
 #define UVC_CTRL_CONTROL_TIMEOUT	300
 #define UVC_CTRL_STREAMING_TIMEOUT	1000
@@ -163,6 +170,8 @@ struct uvc_xu_control {
 /* Format flags */
 #define UVC_FMT_FLAG_COMPRESSED		0x00000001
 #define UVC_FMT_FLAG_STREAM		0x00000002
+#define UVC_FMT_FLAG_MPEG2TS_STREAM	0x00000004 
+
 
 /* ------------------------------------------------------------------------
  * Structures.
@@ -348,6 +357,7 @@ struct uvc_format {
 
 	unsigned int nframes;
 	struct uvc_frame *frame;
+	__u8 uvc_header_size; 
 };
 
 struct uvc_streaming_header {
@@ -495,6 +505,10 @@ struct uvc_device {
 	__u8 *status;
 	struct input_dev *input;
 	char input_phys[64];
+
+	/* fake 2nd V4L2 deivce for 2nd interface. */ 
+	unsigned int inf2_flag;
+	void *dev2;	
 };
 
 enum uvc_handle_state {

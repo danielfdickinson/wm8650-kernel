@@ -42,6 +42,50 @@
 
 /* fill a qtd, returning how much of the buffer we were able to queue up */
 
+struct clean_struct {
+	u32 transfer_buffer_length;
+	void *tmp_transfer_buffer;		/* (in) associated data buffer */
+	dma_addr_t tmp_transfer_dma;	/* (in) dma addr for transfer_buffer */		
+	struct list_head	mem_list;		/* sw qtd list */
+};
+
+struct list_head	mem_main_list;
+struct list_head	mem_pre_list;
+
+struct work_struct	clean_mem_thread;
+struct ehci_hcd *gri_ehci;
+
+void clean_mem (struct work_struct *work)
+{
+	unsigned long		flags;	
+	struct clean_struct * clean_st;		
+	
+	spin_lock_irqsave (&gri_ehci->lock, flags);		
+	while(1){
+		if (!list_empty(&mem_main_list)){
+			spin_unlock_irqrestore (&gri_ehci->lock, flags);			
+			clean_st = list_entry(mem_main_list.next, struct clean_struct, mem_list);
+			
+	//		printk(KERN_INFO "free len%d va=0x%8.8x pa=0x%8.8x\n",
+	//		clean_st->transfer_buffer_length,
+	//		clean_st->tmp_transfer_buffer, clean_st->tmp_transfer_dma);			
+	
+//			printk(KERN_INFO "free=0x%8.8x\n",clean_st->tmp_transfer_buffer);	
+			dma_free_coherent (ehci_to_hcd(gri_ehci)->self.controller,
+			clean_st->transfer_buffer_length,
+			clean_st->tmp_transfer_buffer, clean_st->tmp_transfer_dma);	
+			spin_lock_irqsave (&gri_ehci->lock, flags);		
+			list_del(&clean_st->mem_list);
+			spin_unlock_irqrestore (&gri_ehci->lock, flags);
+			kfree(clean_st);
+			spin_lock_irqsave (&gri_ehci->lock, flags);		
+		}
+		else
+			break;
+	}
+	spin_unlock_irqrestore (&gri_ehci->lock, flags);	
+}
+
 static int
 qtd_fill(struct ehci_hcd *ehci, struct ehci_qtd *qtd, dma_addr_t buf,
 		  size_t len, int token, int maxpacket)
@@ -258,6 +302,8 @@ ehci_urb_done(struct ehci_hcd *ehci, struct urb *urb, int status)
 __releases(ehci->lock)
 __acquires(ehci->lock)
 {
+	gri_ehci=ehci;
+	
 	if (likely (urb->hcpriv != NULL)) {
 		struct ehci_qh	*qh = (struct ehci_qh *) urb->hcpriv;
 
@@ -288,9 +334,32 @@ __acquires(ehci->lock)
 		status,
 		urb->actual_length, urb->transfer_buffer_length);
 #endif
-
+	/*{CharlesTu, 2008.12.26, for test mode */
+#ifdef CONFIG_USB_EHCI_EHSET
+	if (likely(urb->transfer_flags == URB_HCD_DRIVER_TEST))
+	return;
+#endif
+	/*CharlesTu}*/
 	/* complete() can reenter this HCD */
 	usb_hcd_unlink_urb_from_ep(ehci_to_hcd(ehci), urb);
+
+	if (urb->flag_use_tmp == 0x03050709) {
+			struct clean_struct * clean_st;
+
+			if (!list_empty(&mem_pre_list)){
+				clean_st = list_entry(mem_pre_list.next, struct clean_struct, mem_list);
+				list_del_init(&clean_st->mem_list);
+				clean_st->transfer_buffer_length=urb->transfer_buffer_length;
+				clean_st->tmp_transfer_buffer=urb->tmp_transfer_buffer;
+				clean_st->tmp_transfer_dma=urb->tmp_transfer_dma;
+				INIT_LIST_HEAD (&clean_st->mem_list);
+				list_add_tail(&clean_st->mem_list, &mem_main_list);
+				urb->flag_use_tmp = 0;
+//printk(KERN_INFO "done urb=0x%8.8x\n",urb);				
+				schedule_work(&clean_mem_thread);
+			}
+	}			
+	
 	spin_unlock (&ehci->lock);
 	usb_hcd_giveback_urb(ehci_to_hcd(ehci), urb, status);
 	spin_lock (&ehci->lock);
@@ -659,7 +728,11 @@ qh_urb_transaction (
 	/*
 	 * data transfer stage:  buffer setup
 	 */
-	buf = urb->transfer_dma;
+	 // gri modify
+	if (urb->flag_use_tmp == 0x03050709)
+		buf = urb->tmp_transfer_dma;
+	else 
+		buf = urb->transfer_dma;
 
 	if (is_input)
 		token |= (1 /* "in" */ << 8);
@@ -857,6 +930,11 @@ qh_make (
 				qh->period = ehci->periodic_size;
 				urb->interval = qh->period;
 			}
+			/*CharlesTu,2009.04.29,patch Genesys hub with LS keyboard 
+			* and FS mouse , test mouse will occur device reset issue.
+			*/
+			if (qh->period < 8)  
+				qh->period = 8;
 		}
 	}
 
@@ -1123,6 +1201,14 @@ submit_async (
 	/* Control/bulk operations through TTs don't need scheduling,
 	 * the HC and TT handle it when the TT has a buffer ready.
 	 */
+	if (urb->flag_use_tmp == 0x03050709) 
+	{
+		struct clean_struct * clean_st;
+		clean_st = kmalloc(sizeof(*clean_st), GFP_ATOMIC);
+		INIT_LIST_HEAD (&clean_st->mem_list);
+		list_add_tail(&clean_st->mem_list, &mem_pre_list);				
+	}	 
+	 
 	if (likely (qh->qh_state == QH_STATE_IDLE))
 		qh_link_async(ehci, qh);
  done:
@@ -1136,12 +1222,18 @@ submit_async (
 
 /* the async qh for the qtds being reclaimed are now unlinked from the HC */
 
+/* the async qh for the qtds being reclaimed are now unlinked from the HC */
+//CharlesTu
+int gri_ehciwork_irq=0;
+int gri_kick_iaa=0;
 static void end_unlink_async (struct ehci_hcd *ehci)
 {
 	struct ehci_qh		*qh = ehci->reclaim;
 	struct ehci_qh		*next;
 
-	iaa_watchdog_done(ehci);
+	//CharlesTu,2010.10.26, patch wifi performance and usb storage performance.
+	//iaa_watchdog_done(ehci);
+   	 gri_kick_iaa=0;
 
 	// qh->hw_next = cpu_to_hc32(qh->qh_dma);
 	qh->qh_state = QH_STATE_IDLE;
@@ -1181,7 +1273,8 @@ static void start_unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 {
 	int		cmd = ehci_readl(ehci, &ehci->regs->command);
 	struct ehci_qh	*prev;
-
+	int i = 0; 
+	int status; 
 #ifdef DEBUG
 	assert_spin_locked(&ehci->lock);
 	if (ehci->reclaim
@@ -1226,11 +1319,38 @@ static void start_unlink_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 		return;
 	}
 
+     //CharlesTu{
+     //Patch iaa lose issue.
 	cmd |= CMD_IAAD;
+	gri_kick_iaa=1;    
 	ehci_writel(ehci, cmd, &ehci->regs->command);
 	(void)ehci_readl(ehci, &ehci->regs->command);
-	iaa_watchdog_start(ehci);
+	//iaa_watchdog_start(ehci);
+	if (gri_ehciwork_irq == 0) {
+		for (i = 0;i < 10;i++){
+		udelay(10);    
+			status = ehci_readl(ehci, &ehci->regs->status);
+			if (status & STS_IAA) {
+					cmd = ehci_readl(ehci, &ehci->regs->command);
+				if (cmd & CMD_IAAD) {
+					ehci_writel(ehci, cmd & ~CMD_IAAD,
+					&ehci->regs->command);
+					ehci_dbg(ehci, "IAA with IAAD still set?\n");
+				}            
+				ehci_writel(ehci, STS_IAA, &ehci->regs->status);		  	
+				/* guard against (alleged) silicon errata */
+				if (ehci->reclaim) {
+					COUNT(ehci->stats.reclaim);
+					end_unlink_async(ehci);
+				} else
+					ehci_dbg(ehci, "IAA with nothing to reclaim?\n");          
+				break;
+			}
+		}
+	}
+	//}CharlesTu
 }
+
 
 /*-------------------------------------------------------------------------*/
 

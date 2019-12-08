@@ -454,7 +454,7 @@ static int tt_no_collision (
 static int enable_periodic (struct ehci_hcd *ehci)
 {
 	u32	cmd;
-	int	status;
+	//int	status;
 
 	if (ehci->periodic_sched++)
 		return 0;
@@ -462,10 +462,16 @@ static int enable_periodic (struct ehci_hcd *ehci)
 	/* did clearing PSE did take effect yet?
 	 * takes effect only at frame boundaries...
 	 */
+	/* CharlesTu,2009.10.06,patch Ralink RT73 usb wifi driver with usb HS hub plug out issue.
+	*  Root cause: plug out and plug in usb hub , cause get hub port status fail in hub event .
+	*  Solution : Don't handshake. Due to STS_PSS always 1.
+	*/ 
+	/*
 	status = handshake_on_error_set_halt(ehci, &ehci->regs->status,
-					     STS_PSS, 0, 9 * 125);
+			     STS_PSS, 0, 9 * 125);
 	if (status)
 		return status;
+	*/
 
 	cmd = ehci_readl(ehci, &ehci->regs->command) | CMD_PSE;
 	ehci_writel(ehci, cmd, &ehci->regs->command);
@@ -482,7 +488,7 @@ static int enable_periodic (struct ehci_hcd *ehci)
 
 static int disable_periodic (struct ehci_hcd *ehci)
 {
-	u32	cmd;
+	//u32	cmd;
 	int	status;
 
 	if (--ehci->periodic_sched)
@@ -505,9 +511,16 @@ static int disable_periodic (struct ehci_hcd *ehci)
 					     STS_PSS, STS_PSS, 9 * 125);
 	if (status)
 		return status;
-
+	/* CharlesTu,2010.01.08, patch Ralink RT73 usb wifi driver with usb HS hub plug out issue.
+	*  Root cause: ifconfig rausb0 up and plug out usb hub ,cause doorbell bit not clear.
+	*              It is h/w bug.
+	*  work around : Don't disable periodic schedule enable bit.
+	*/
+	/*
 	cmd = ehci_readl(ehci, &ehci->regs->command) & ~CMD_PSE;
 	ehci_writel(ehci, cmd, &ehci->regs->command);
+	*/
+	
 	/* posted write ... */
 
 	ehci->next_uframe = -1;

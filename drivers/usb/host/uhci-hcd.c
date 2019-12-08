@@ -387,7 +387,9 @@ __acquires(uhci->lock)
 		uhci->rh_state = UHCI_RH_RESUMING;
 		outw(USBCMD_FGR | USBCMD_CF | egsm, uhci->io_addr + USBCMD);
 		spin_unlock_irq(&uhci->lock);
-		msleep(20);
+		/*CharlesTu,2011.01.12,reduce resume time*/
+		//msleep(20);
+		msleep(10);
 		spin_lock_irq(&uhci->lock);
 		if (uhci->dead)
 			return;
@@ -786,6 +788,7 @@ static int uhci_pci_suspend(struct usb_hcd *hcd)
 {
 	struct uhci_hcd *uhci = hcd_to_uhci(hcd);
 	int rc = 0;
+	u16 pmc_enable = 0;
 
 	dev_dbg(uhci_dev(uhci), "%s\n", __func__);
 
@@ -807,7 +810,11 @@ static int uhci_pci_suspend(struct usb_hcd *hcd)
 	hcd->poll_rh = 0;
 
 	/* FIXME: Enable non-PME# remote wakeup? */
-
+      //CharlesTu, for PM
+	pci_read_config_word(to_pci_dev(uhci_dev(uhci)), 0x84, &pmc_enable);
+	pmc_enable |= 0x103;
+	pci_write_config_word(to_pci_dev(uhci_dev(uhci)), 0x84, pmc_enable);
+	
 done_okay:
 	clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
 done:
@@ -818,7 +825,18 @@ done:
 static int uhci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 {
 	struct uhci_hcd *uhci = hcd_to_uhci(hcd);
+	u16 pmc_enable = 0;
+	/*CharlesTu,2009.08.30,patch uhci device disconnet irq nobody care issue		
+	* Before clear D3 mode ,disable UHCI resume interrupt 
+	* The right sequence: disconnect->wakeup->D0 mode->clear resume.
+	*/
+	REG8_VAL( 0xd8007B04) &= ~0x02;
+	REG8_VAL( 0xd8008D04) &= ~0x02;
 
+	pci_read_config_word(to_pci_dev(uhci_dev(uhci)), 0x84, &pmc_enable);
+	pmc_enable &= ~0x03;
+	pci_write_config_word(to_pci_dev(uhci_dev(uhci)), 0x84, pmc_enable);
+	
 	dev_dbg(uhci_dev(uhci), "%s\n", __func__);
 
 	/* Since we aren't in D3 any more, it's safe to set this flag

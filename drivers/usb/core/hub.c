@@ -549,6 +549,8 @@ EXPORT_SYMBOL_GPL(usb_hub_clear_tt_buffer);
 /* If do_delay is false, return the number of milliseconds the caller
  * needs to delay.
  */
+/*CharlesTu,2011.01.21,set resume flag to reduce resume timing.*/ 
+unsigned char usb_resume_flag=0;  //Charles
 static unsigned hub_power_on(struct usb_hub *hub, bool do_delay)
 {
 	int port1;
@@ -572,9 +574,11 @@ static unsigned hub_power_on(struct usb_hub *hub, bool do_delay)
 		set_port_feature(hub->hdev, port1, USB_PORT_FEAT_POWER);
 
 	/* Wait at least 100 msec for power to become stable */
-	delay = max(pgood_delay, (unsigned) 100);
-	if (do_delay)
-		msleep(delay);
+	delay = max(pgood_delay, (unsigned) 100);	
+	if (do_delay) {
+		if (!usb_resume_flag)  //CharlesTu
+				msleep(delay);
+	}
 	return delay;
 }
 
@@ -718,15 +722,19 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 			clear_port_feature(hdev, port1, USB_PORT_FEAT_ENABLE);
 			portstatus &= ~USB_PORT_STAT_ENABLE;
 		}
-
+		/*CharlesTu,2011.01.21,set resume flag to reduce resume timing*/
 		/* Clear status-change flags; we'll debounce later */
 		if (portchange & USB_PORT_STAT_C_CONNECTION) {
-			need_debounce_delay = true;
+			if (!usb_resume_flag) {
+				need_debounce_delay = true;
+			}
 			clear_port_feature(hub->hdev, port1,
 					USB_PORT_FEAT_C_CONNECTION);
 		}
 		if (portchange & USB_PORT_STAT_C_ENABLE) {
-			need_debounce_delay = true;
+			if (!usb_resume_flag) {
+				need_debounce_delay = true;
+			}
 			clear_port_feature(hub->hdev, port1,
 					USB_PORT_FEAT_C_ENABLE);
 		}
@@ -1987,7 +1995,9 @@ static int hub_port_reset(struct usb_hub *hub, int port1,
 		switch (status) {
 		case 0:
 			/* TRSTRCY = 10 ms; plus some extra */
-			msleep(10 + 40);
+			/*CharlesTu,2011.01.21,remove extra time to reduce resume timing.*/
+			//msleep(10 + 40);
+			msleep(10);
 			update_address(udev, 0);
 			/* FALL THROUGH */
 		case -ENOTCONN:

@@ -21,6 +21,8 @@
 
 #include <asm/uaccess.h>
 
+extern int wmt_getsyspara(char *varname, char *varval, int *varlen);
+extern int wmt_setsyspara(char *varname, char *varval);
 
 /*
  * Data structure to hold the pointer to the mtd device as well
@@ -707,6 +709,40 @@ static int mtd_ioctl(struct inode *inode, struct file *file,
 			ret = -EOPNOTSUPP;
 		else
 			return mtd->block_markbad(mtd, offs);
+		break;
+	}
+
+	case MEMGETENV:
+	{
+		struct env_info_user env_data;
+
+		if (copy_from_user(&env_data, argp, sizeof(struct env_info_user)))
+			return -EFAULT;
+		/*printk(KERN_NOTICE " wmt_getsyspara start varname = %s\n", env_data.varname);*/
+		ret = wmt_getsyspara(env_data.varname, env_data.varval, &env_data.varlen);
+		/*printk(KERN_NOTICE " wmt_getsyspara ret = 0x%x, varlen = 0x%x\n", ret, env_data.varlen);
+		printk(KERN_NOTICE " wmt_getsyspara varval = %s\n", env_data.varval);*/
+		/*if (ret)
+			return ret;//-EINVAL;*/
+		if (copy_to_user(argp, &env_data,	sizeof(struct env_info_user)))
+			return -EFAULT;
+
+		break;
+	}
+
+	case MEMSETENV:
+	{
+		struct env_info_user env_data;
+
+		if (copy_from_user(&env_data, argp, sizeof(struct env_info_user)))
+			return -EFAULT;
+		/*printk(KERN_NOTICE " wmt_setsyspara start varname = %s\n", env_data.varname);
+		printk(KERN_NOTICE " wmt_setsyspara ret = 0x%x, varval = %s\n", ret, env_data.varval);*/
+		if (env_data.varpoint == NULL)
+			ret = wmt_setsyspara(env_data.varname, NULL);
+		else
+			ret = wmt_setsyspara(env_data.varname, env_data.varval);
+
 		break;
 	}
 

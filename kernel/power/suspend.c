@@ -17,8 +17,22 @@
 #include <linux/syscalls.h>
 
 #include "power.h"
+unsigned int pm_flags;
+EXPORT_SYMBOL(pm_flags);
+
+#ifdef CONFIG_WMT_SPITS2_SUPPORT
+extern int wmt_ts_pre_suspend(pm_message_t state);
+extern int wmt_ts_post_resume(void);
+#endif
+
+#ifdef CONFIG_KEYBOARD_WMT
+extern void wmt_kpad_int_ctrl(int state);
+#endif
 
 const char *const pm_states[PM_SUSPEND_MAX] = {
+#ifdef CONFIG_EARLYSUSPEND
+	[PM_SUSPEND_ON]		= "on",
+#endif
 	[PM_SUSPEND_STANDBY]	= "standby",
 	[PM_SUSPEND_MEM]	= "mem",
 };
@@ -198,7 +212,9 @@ int suspend_devices_and_enter(suspend_state_t state)
 		if (error)
 			goto Close;
 	}
+	/*
 	suspend_console();
+	*/
 	suspend_test_start();
 	error = dpm_suspend_start(PMSG_SUSPEND);
 	if (error) {
@@ -214,6 +230,10 @@ int suspend_devices_and_enter(suspend_state_t state)
  Resume_devices:
 	suspend_test_start();
 	dpm_resume_end(PMSG_RESUME);
+#ifdef CONFIG_WMT_SPITS2_SUPPORT	
+	/*Disable TS interrupt*/
+	wmt_ts_pre_suspend(PMSG_SUSPEND);
+#endif
 	suspend_test_finish("resume devices");
 	resume_console();
  Close:
@@ -241,6 +261,28 @@ static void suspend_finish(void)
 	pm_restore_console();
 }
 
+static int run_suspend(void)
+{
+	int ret;
+	char *argv[] = { "/system/etc/wmt/pm.sh", "", NULL };
+	char *envp[] =
+		{ "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", "ACTION=suspend", NULL };
+
+	ret = call_usermodehelper(argv[0], argv, envp, 1);
+	return ret;
+}
+
+static int run_resume(void)
+{
+	int ret;
+	char *argv[] = { "/system/etc/wmt/pm.sh", "", NULL };
+	char *envp[] =
+		{ "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", "ACTION=resume", NULL };
+
+	ret = call_usermodehelper(argv[0], argv, envp, 1);
+	return ret;
+}
+
 /**
  *	enter_state - Do common work of entering low-power state.
  *	@state:		pm_state structure for state we're entering.
@@ -261,6 +303,8 @@ int enter_state(suspend_state_t state)
 	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
 
+	run_suspend();
+	
 	printk(KERN_INFO "PM: Syncing filesystems ... ");
 	sys_sync();
 	printk("done.\n");
@@ -279,6 +323,7 @@ int enter_state(suspend_state_t state)
  Finish:
 	pr_debug("PM: Finishing wakeup.\n");
 	suspend_finish();
+	run_resume();
  Unlock:
 	mutex_unlock(&pm_mutex);
 	return error;

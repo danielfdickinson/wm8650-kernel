@@ -16,9 +16,11 @@
 #include "power.h"
 
 DEFINE_MUTEX(pm_mutex);
+#ifdef CONFIG_WMT_SPITS2_SUPPORT
+extern int wmt_ts_pre_suspend(pm_message_t state);
+extern int wmt_ts_post_resume(void);
+#endif
 
-unsigned int pm_flags;
-EXPORT_SYMBOL(pm_flags);
 
 #ifdef CONFIG_PM_SLEEP
 
@@ -143,11 +145,38 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 	return (s - buf);
 }
 
+static int run_pre_suspend(void)
+{
+	int ret;
+	char *argv[] = { "/system/etc/wmt/pm.sh", "", NULL };
+	char *envp[] =
+		{ "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", "ACTION=pre_suspend", NULL };
+
+	ret = call_usermodehelper(argv[0], argv, envp, 1);
+	return ret;
+}
+
+static int run_post_resume(void)
+{
+	int ret;
+	char *argv[] = { "/system/etc/wmt/pm.sh", "", NULL };
+	char *envp[] =
+		{ "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", "ACTION=post_resume", NULL };
+
+	ret = call_usermodehelper(argv[0], argv, envp, 1);
+	return ret;
+}
+
+
 static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 			   const char *buf, size_t n)
 {
 #ifdef CONFIG_SUSPEND
+#ifdef CONFIG_EARLYSUSPEND
+	suspend_state_t state = PM_SUSPEND_ON;
+#else
 	suspend_state_t state = PM_SUSPEND_STANDBY;
+#endif
 	const char * const *s;
 #endif
 	char *p;
@@ -168,8 +197,28 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 		if (*s && len == strlen(*s) && !strncmp(buf, *s, len))
 			break;
 	}
-	if (state < PM_SUSPEND_MAX && *s)
+	if (state < PM_SUSPEND_MAX && *s) {
+		if (state == PM_SUSPEND_MEM){
+			run_pre_suspend();
+#ifdef CONFIG_WMT_SPITS2_SUPPORT			
+			/*Disable TS interrupt*/
+			wmt_ts_pre_suspend(PMSG_SUSPEND);
+#endif
+		} else if(state == PM_SUSPEND_ON) {
+			run_post_resume();
+#ifdef CONFIG_WMT_SPITS2_SUPPORT			
+			wmt_ts_post_resume();
+#endif			
+		}
+#ifdef CONFIG_EARLYSUSPEND
+		if (state == PM_SUSPEND_ON || valid_state(state)) {
+			error = 0;
+			request_suspend_state(state);
+		}
+#else
 		error = enter_state(state);
+#endif
+	}
 #endif
 
  Exit:
@@ -203,6 +252,11 @@ pm_trace_store(struct kobject *kobj, struct kobj_attribute *attr,
 power_attr(pm_trace);
 #endif /* CONFIG_PM_TRACE */
 
+#ifdef CONFIG_USER_WAKELOCK
+power_attr(wake_lock);
+power_attr(wake_unlock);
+#endif
+
 static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
@@ -210,6 +264,10 @@ static struct attribute * g[] = {
 #endif
 #if defined(CONFIG_PM_SLEEP) && defined(CONFIG_PM_DEBUG)
 	&pm_test_attr.attr,
+#endif
+#ifdef CONFIG_USER_WAKELOCK
+	&wake_lock_attr.attr,
+	&wake_unlock_attr.attr,
 #endif
 	NULL,
 };

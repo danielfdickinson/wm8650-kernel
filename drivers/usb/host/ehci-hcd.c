@@ -100,9 +100,9 @@ MODULE_PARM_DESC (park, "park setting; 1-3 back-to-back async packets");
 static int ignore_oc = 0;
 module_param (ignore_oc, bool, S_IRUGO);
 MODULE_PARM_DESC (ignore_oc, "ignore bogus hardware overcurrent indications");
-
-#define	INTR_MASK (STS_IAA | STS_FATAL | STS_PCD | STS_ERR | STS_INT)
-
+//CharlesTu,2010.10.5, disable IAA interrupt.
+//#define	INTR_MASK (STS_IAA | STS_FATAL | STS_PCD | STS_ERR | STS_INT)
+#define	INTR_MASK (STS_FATAL | STS_PCD | STS_ERR | STS_INT)
 /*-------------------------------------------------------------------------*/
 
 #include "ehci.h"
@@ -514,6 +514,11 @@ static void ehci_stop (struct usb_hcd *hcd)
 		    ehci_readl(ehci, &ehci->regs->status));
 }
 
+extern struct list_head	mem_main_list;
+extern struct work_struct	clean_mem_thread;
+extern struct list_head	mem_pre_list;
+extern void clean_mem (struct work_struct *work);
+
 /* one-time init, only for memory state */
 static int ehci_init(struct usb_hcd *hcd)
 {
@@ -522,6 +527,11 @@ static int ehci_init(struct usb_hcd *hcd)
 	int			retval;
 	u32			hcc_params;
 	struct ehci_qh_hw	*hw;
+
+	INIT_LIST_HEAD (&mem_main_list);
+	INIT_LIST_HEAD (&mem_pre_list);
+
+	INIT_WORK(&clean_mem_thread, clean_mem);
 
 	spin_lock_init(&ehci->lock);
 
@@ -698,9 +708,11 @@ static int ehci_run (struct usb_hcd *hcd)
 
 	return 0;
 }
-
 /*-------------------------------------------------------------------------*/
 
+//CharlesTu
+extern int gri_ehciwork_irq;
+extern int gri_kick_iaa;
 static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
@@ -808,9 +820,37 @@ dead:
 		 */
 		bh = 1;
 	}
-
-	if (bh)
+//CharlesTu{
+// patch iaa lose issue. 
+	if (bh) {
+		gri_ehciwork_irq = 1;
 		ehci_work (ehci);
+		gri_ehciwork_irq = 0;
+	}
+	if (gri_kick_iaa) {
+		int i;
+		for (i = 0;i < 10;i++) {
+			udelay(10);    
+			status = ehci_readl(ehci, &ehci->regs->status);
+			if (status & STS_IAA) {
+				cmd = ehci_readl(ehci, &ehci->regs->command);
+				if (cmd & CMD_IAAD) {
+					ehci_writel(ehci, cmd & ~CMD_IAAD,
+					&ehci->regs->command);
+					ehci_dbg(ehci, "IAA with IAAD still set?\n");
+				}            
+				ehci_writel(ehci, STS_IAA, &ehci->regs->status);		  	
+				/* guard against (alleged) silicon errata */
+				if (ehci->reclaim) {
+					COUNT(ehci->stats.reclaim);
+					end_unlink_async(ehci);
+				} else
+					ehci_dbg(ehci, "IAA with nothing to reclaim?\n");          
+				break;
+		}
+	}
+    }
+//}CharlesTu
 	spin_unlock (&ehci->lock);
 	if (pcd_status)
 		usb_hcd_poll_rh_status(hcd);
@@ -841,6 +881,8 @@ static int ehci_urb_enqueue (
 
 	INIT_LIST_HEAD (&qtd_list);
 
+		urb->flag_use_tmp=0;
+
 	switch (usb_pipetype (urb->pipe)) {
 	case PIPE_CONTROL:
 		/* qh_completions() code doesn't handle all the fault cases
@@ -851,6 +893,28 @@ static int ehci_urb_enqueue (
 		/* FALLTHROUGH */
 	/* case PIPE_BULK: */
 	default:
+
+	//gri modify
+		if (!(usb_pipein (urb->pipe))){
+			if ((unsigned int)(urb->transfer_buffer) % 4){
+				urb->tmp_transfer_buffer =	(__le32 *)dma_alloc_coherent (ehci_to_hcd(ehci)->self.controller,
+					urb->transfer_buffer_length,
+					&urb->tmp_transfer_dma, GFP_ATOMIC);
+//  			printk(KERN_INFO "ori=0x%8.8x alloc=0x%8.8x urb=0x%8.8x\n",urb->transfer_buffer,urb->tmp_transfer_buffer,urb);	
+
+				urb->flag_use_tmp=0x03050709;
+				memcpy(urb->tmp_transfer_buffer, urb->transfer_buffer, urb->transfer_buffer_length);
+#if 0				 
+				{
+					struct clean_struct * clean_st;
+					clean_st = kmalloc(sizeof(*clean_st), GFP_ATOMIC);
+					INIT_LIST_HEAD (&clean_st->mem_list);
+					list_add_tail(&clean_st->mem_list, &mem_pre_list);				
+				}
+#endif				
+			}
+		}
+
 		if (!qh_urb_transaction (ehci, urb, &qtd_list, mem_flags))
 			return -ENOMEM;
 		return submit_async(ehci, urb, &qtd_list, mem_flags);
@@ -937,6 +1001,23 @@ static int ehci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 			qh_completions(ehci, qh);
 			break;
 		}
+	#if 1
+		if (urb->flag_use_tmp ==0x03050709) {
+				struct clean_struct * clean_st;
+				if (!list_empty(&mem_pre_list)){
+					clean_st = list_entry(mem_pre_list.next, struct clean_struct, mem_list);
+					list_del_init(&clean_st->mem_list);
+					clean_st->transfer_buffer_length=urb->transfer_buffer_length;
+					clean_st->tmp_transfer_buffer=urb->tmp_transfer_buffer;
+					clean_st->tmp_transfer_dma=urb->tmp_transfer_dma;
+					INIT_LIST_HEAD (&clean_st->mem_list);
+					list_add_tail(&clean_st->mem_list, &mem_main_list);
+					urb->flag_use_tmp = 0;
+//printk(KERN_INFO "de urb=0x%8.8x\n",urb);					
+					schedule_work(&clean_mem_thread);
+				}		
+		}
+	#endif			
 		break;
 
 	case PIPE_INTERRUPT:

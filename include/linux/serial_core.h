@@ -189,6 +189,7 @@
 #include <linux/tty.h>
 #include <linux/mutex.h>
 #include <linux/sysrq.h>
+#include <asm/dma.h>
 
 struct uart_port;
 struct serial_struct;
@@ -217,6 +218,7 @@ struct uart_ops {
 	void		(*pm)(struct uart_port *, unsigned int state,
 			      unsigned int oldstate);
 	int		(*set_wake)(struct uart_port *, unsigned int state);
+	void		(*wake_peer)(struct uart_port *);
 
 	/*
 	 * Return a string describing the type of the port
@@ -337,6 +339,70 @@ struct uart_port {
 	unsigned char		suspended;
 	unsigned char		unused[2];
 	void			*private_data;		/* generic platform data pointer */
+
+       char *id;                                                   /* identification string */
+        char *uart_rx_dma_buf0;
+        char *uart_rx_dma_buf1;
+        dma_addr_t uart_rx_dma_phy0;
+        dma_addr_t uart_rx_dma_phy1;
+        char *uart_dma_tmp_buf0;
+        dma_addr_t uart_dma_tmp_phy0;
+    char *uart_dma_tmp_buf1;
+        dma_addr_t uart_dma_tmp_phy1;
+        struct dma_regs_s *dma_reg;
+        enum dma_device_e dma_rx_dev;                /* RX device identifier for DMA */
+    enum dma_device_e dma_tx_dev;                /* TX device identifier for DMA */
+    struct dma_device_cfg_s dma_rx_cfg;           /* RX DMA device config */
+    struct dma_device_cfg_s dma_tx_cfg;           /* TX DMA device config */
+        dmach_t rx_dmach;                               /* RX DMA channel number */
+    dmach_t tx_dmach;                           /* TX DMA channel number */
+    unsigned int buffer_used;
+    unsigned int buffer_selected;
+    char *uart_tx_dma_buf0;
+        char *uart_tx_dma_buf1;
+        dma_addr_t uart_tx_dma_phy0;
+        dma_addr_t uart_tx_dma_phy0_end;
+        unsigned int last_pos;
+
+        char *uart_rx_dma_buf0_org;
+        char *uart_rx_dma_buf1_org;
+        dma_addr_t uart_rx_dma_phy0_org;
+        dma_addr_t uart_rx_dma_phy1_org;
+        char *uart_tx_dma_buf0_org;
+        dma_addr_t uart_tx_dma_phy0_org;
+        unsigned int old_urier;
+};
+
+#define DMA_TX_END 1    
+#define DMA_TX_GOING 0  
+
+/*
+ * This is the state information which is only valid when the port
+ * is open; it may be cleared the core driver once the device has
+ * been closed.  Either the low level driver or the core can modify
+ * stuff here.
+ */
+typedef unsigned int __bitwise__ uif_t;
+
+struct uart_info {
+	struct tty_port		port;
+	struct circ_buf		xmit;
+	uif_t			flags;
+
+/*
+ * Definitions for info->flags.  These are _private_ to serial_core, and
+ * are specific to this structure.  They may be queried by low level drivers.
+ *
+ * FIXME: use the ASY_ definitions
+ */
+#define UIF_CHECK_CD		((__force uif_t) (1 << 25))
+#define UIF_CTS_FLOW		((__force uif_t) (1 << 26))
+#define UIF_NORMAL_ACTIVE	((__force uif_t) (1 << 29))
+#define UIF_INITIALIZED		((__force uif_t) (1 << 31))
+#define UIF_SUSPENDED		((__force uif_t) (1 << 30))
+
+	struct tasklet_struct	tlet;
+	wait_queue_head_t	delta_msr_wait;
 };
 
 /*

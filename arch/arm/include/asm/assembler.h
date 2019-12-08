@@ -64,11 +64,11 @@
  *
  * On Feroceon there is much to gain however, regardless of cache mode.
  */
-#ifdef CONFIG_CPU_FEROCEON
+//#ifdef CONFIG_CPU_FEROCEON
 #define CALGN(code...) code
-#else
-#define CALGN(code...)
-#endif
+//#else
+//#define CALGN(code...)
+//#endif
 
 /*
  * Enable and disable interrupts

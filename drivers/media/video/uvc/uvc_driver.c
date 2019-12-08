@@ -58,6 +58,11 @@ static struct uvc_format_desc uvc_fmts[] = {
 		.fcc		= V4L2_PIX_FMT_YUYV,
 	},
 	{
+		.name		= "YUV 4:2:2 (YUYV)",
+		.guid		= UVC_GUID_FORMAT_YUY2_ISIGHT,
+		.fcc		= V4L2_PIX_FMT_YUYV,
+	},
+	{
 		.name		= "YUV 4:2:0 (NV12)",
 		.guid		= UVC_GUID_FORMAT_NV12,
 		.fcc		= V4L2_PIX_FMT_NV12,
@@ -83,9 +88,14 @@ static struct uvc_format_desc uvc_fmts[] = {
 		.fcc		= V4L2_PIX_FMT_UYVY,
 	},
 	{
-		.name		= "Greyscale",
+		.name		= "Greyscale (8-bit)",
 		.guid		= UVC_GUID_FORMAT_Y800,
 		.fcc		= V4L2_PIX_FMT_GREY,
+	},
+	{
+		.name		= "Greyscale (16-bit)",
+		.guid		= UVC_GUID_FORMAT_Y16,
+		.fcc		= V4L2_PIX_FMT_Y16,
 	},
 	{
 		.name		= "RGB Bayer",
@@ -408,6 +418,30 @@ static int uvc_parse_format(struct uvc_device *dev,
 		break;
 
 	case UVC_VS_FORMAT_MPEG2TS:
+		if (buflen < 7) {
+			uvc_trace(UVC_TRACE_DESCR, "device %d videostreaming"
+			       "interface %d FORMAT error\n",
+			       dev->udev->devnum,
+			       alts->desc.bInterfaceNumber);
+			return -EINVAL;
+		}
+
+		strlcpy(format->name, "MPEG2-TS", sizeof format->name);
+		format->fcc = V4L2_PIX_FMT_MPEG; /* V4L2_PIX_FMT_MJPEG */
+		format->flags = UVC_FMT_FLAG_COMPRESSED | UVC_FMT_FLAG_MPEG2TS_STREAM;
+		format->bpp = 0;
+		ftype = UVC_VS_FORMAT_MPEG2TS;
+			
+		/* Create a dummy frame descriptor. */
+		frame = &format->frame[0];
+		memset(&format->frame[0], 0, sizeof format->frame[0]);
+		frame->bFrameIntervalType = 1;
+		frame->dwDefaultFrameInterval = 333333; /* 1 */
+		frame->dwFrameInterval = *intervals;
+		*(*intervals)++ = 333333; /* *(*intervals)++ = 1 */
+		format->nframes = 1;		
+		uvc_trace(UVC_TRACE_DESCR, "***cliff added (VS_FORMAT_MPEG2TS)\n");
+		break;
 	case UVC_VS_FORMAT_STREAM_BASED:
 		/* Not supported yet. */
 	default:
@@ -675,6 +709,18 @@ static int uvc_parse_streaming(struct uvc_device *dev,
 			break;
 
 		case UVC_VS_FORMAT_MPEG2TS:
+			uvc_trace(UVC_TRACE_DESCR, "device %d videostreaming "
+				"interface %d FORMAT %u .\n",
+				dev->udev->devnum,
+				alts->desc.bInterfaceNumber, _buffer[2]);
+			/* Stream based format has no frame descriptor. We will create a
+			 * dummy frame descriptor with a dummy frame interval.
+			 */
+			nformats++;
+			nframes++;
+			nintervals++;
+			uvc_trace(UVC_TRACE_DESCR, "***cliff added (VS_FORMAT_MPEG2TS) (2)\n");
+			break;
 		case UVC_VS_FORMAT_STREAM_BASED:
 			uvc_trace(UVC_TRACE_DESCR, "device %d videostreaming "
 				"interface %d FORMAT %u is not supported.\n",
@@ -728,6 +774,7 @@ static int uvc_parse_streaming(struct uvc_device *dev,
 		case UVC_VS_FORMAT_MJPEG:
 		case UVC_VS_FORMAT_DV:
 		case UVC_VS_FORMAT_FRAME_BASED:
+		case UVC_VS_FORMAT_MPEG2TS:  
 			format->frame = frame;
 			ret = uvc_parse_format(dev, streaming, format,
 				&interval, buffer, buflen);
@@ -883,6 +930,40 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 		dev->clock_frequency = get_unaligned_le32(&buffer[7]);
 
 		/* Parse all USB Video Streaming interfaces. */
+#if 1 
+		if (n == 2) // There are two VS interfaces
+		{
+			
+			if (dev->inf2_flag == 0)
+				i = 0; // first interface
+			else
+				i = 1; // 2nd interface
+
+			uvc_trace(UVC_TRACE_DESCR, "Here n = %d, buffer[12+i] = %d, i=%d, flag= %d\n",
+							 n, buffer[12+i], i, dev->inf2_flag);
+			intf = usb_ifnum_to_if(udev, buffer[12+i]);				
+			if (intf != NULL)
+			{
+				uvc_parse_streaming(dev, intf);
+			}
+			dev->inf2_flag = 1;
+		}
+		else	
+		{
+			for (i = 0; i < n; ++i) {
+				intf = usb_ifnum_to_if(udev, buffer[12+i]);
+				if (intf == NULL) {
+					uvc_trace(UVC_TRACE_DESCR, "device %d "
+						"interface %d doesn't exists\n",
+						udev->devnum, i);
+					continue;
+				}
+
+				uvc_parse_streaming(dev, intf);
+			}
+		}		
+		
+#else //original
 		for (i = 0; i < n; ++i) {
 			intf = usb_ifnum_to_if(udev, buffer[12+i]);
 			if (intf == NULL) {
@@ -894,6 +975,7 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 
 			uvc_parse_streaming(dev, intf);
 		}
+#endif 
 		break;
 
 	case UVC_VC_INPUT_TERMINAL:
@@ -1712,7 +1794,7 @@ static int uvc_probe(struct usb_interface *intf,
 		     const struct usb_device_id *id)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
-	struct uvc_device *dev;
+	struct uvc_device *dev, *dev2;  
 	int ret;
 
 	if (id->idVendor && id->idProduct)
@@ -1726,6 +1808,8 @@ static int uvc_probe(struct usb_interface *intf,
 	/* Allocate memory for the device and initialize it. */
 	if ((dev = kzalloc(sizeof *dev, GFP_KERNEL)) == NULL)
 		return -ENOMEM;
+
+	dev->inf2_flag = 0; 
 
 	INIT_LIST_HEAD(&dev->entities);
 	INIT_LIST_HEAD(&dev->chains);
@@ -1778,6 +1862,77 @@ static int uvc_probe(struct usb_interface *intf,
 	if (uvc_register_chains(dev) < 0)
 		goto error;
 
+#if 1 
+	uvc_trace(UVC_TRACE_PROBE, "dev->inf2_flag:%u\n", dev->inf2_flag);
+	if (dev->inf2_flag  == 1)
+	{	
+		uvc_trace(UVC_TRACE_PROBE, "!!!!2nd init start.\n");
+		/* Allocate memory for the device and initialize it */
+		if ((dev->dev2 = kzalloc(sizeof *dev, GFP_KERNEL)) == NULL)
+			return -ENOMEM;
+	
+		dev2 = (struct uvc_device *)dev->dev2;
+		dev2->inf2_flag = 1;
+		INIT_LIST_HEAD(&dev2->entities);
+		INIT_LIST_HEAD(&dev2->chains); 
+		INIT_LIST_HEAD(&dev2->streams);
+		kref_init(&dev2->kref);
+
+		dev2->udev = usb_get_dev(udev);
+		dev2->intf = usb_get_intf(intf);
+		dev2->intfnum = intf->cur_altsetting->desc.bInterfaceNumber;
+		dev2->quirks = id->driver_info | uvc_quirks_param;
+
+		if (udev->product != NULL)
+			strncpy(dev2->name, udev->product, sizeof dev2->name);
+		else
+			snprintf(dev2->name, sizeof dev2->name,
+				"UVC Camera (%04x:%04x)",
+				le16_to_cpu(udev->descriptor.idVendor),
+				le16_to_cpu(udev->descriptor.idProduct));
+
+		/* Parse the Video Class control descriptor */
+		if (uvc_parse_control(dev2) < 0) {
+			uvc_trace(UVC_TRACE_PROBE, "Unable to parse UVC "
+				"descriptors.\n");
+			goto error;
+		}
+
+		uvc_printk(KERN_INFO, "Found UVC %u.%02u device %s (%04x:%04x)\n",
+			dev2->uvc_version >> 8, dev2->uvc_version & 0xff,
+			udev->product ? udev->product : "<unnamed>",
+			le16_to_cpu(udev->descriptor.idVendor),
+			le16_to_cpu(udev->descriptor.idProduct));
+
+		if (uvc_quirks_param != 0) {
+			uvc_printk(KERN_INFO, "Forcing device quirks 0x%x by module "
+				"parameter for testing purpose.\n", uvc_quirks_param);
+			uvc_printk(KERN_INFO, "Please report required quirks to the "
+				"linux-uvc-devel mailing list.\n");
+		}
+		/* Initialize controls */
+		if (uvc_ctrl_init_device(dev2) < 0)
+		{
+			uvc_trace(UVC_TRACE_PROBE, "!!!!init error.\n");
+			goto error;
+		}
+		/* Scan the device for video chains. */ 
+		if (uvc_scan_device(dev2) < 0)
+		{
+			uvc_trace(UVC_TRACE_PROBE, "!!!!scan error.\n");
+			goto error;
+		}
+		/* Register the video devices */
+		if (uvc_register_chains(dev2) < 0)
+		{
+			uvc_trace(UVC_TRACE_PROBE, "!!!!reg error.\n");
+			goto error;
+		}
+
+		uvc_trace(UVC_TRACE_PROBE, "!!!!2nd init over.\n");
+	}
+#endif 
+
 	/* Save our data pointer in the interface data. */
 	usb_set_intfdata(intf, dev);
 
@@ -1799,6 +1954,7 @@ error:
 static void uvc_disconnect(struct usb_interface *intf)
 {
 	struct uvc_device *dev = usb_get_intfdata(intf);
+	struct uvc_device *dev2; 
 
 	/* Set the USB interface data to NULL. This can be done outside the
 	 * lock, as there's no other reader.
@@ -1824,6 +1980,11 @@ static void uvc_disconnect(struct usb_interface *intf)
 	mutex_unlock(&uvc_driver.open_mutex);
 
 	kref_put(&dev->kref, uvc_delete);
+	if (dev->inf2_flag  == 1)
+	{
+		dev2 = (struct uvc_device *)dev->dev2;	
+		kref_put(&dev2->kref, uvc_delete);
+	}
 }
 
 static int uvc_suspend(struct usb_interface *intf, pm_message_t message)
@@ -2048,6 +2209,14 @@ static struct usb_device_id uvc_ids[] = {
 	  .bInterfaceSubClass	= 1,
 	  .bInterfaceProtocol	= 0,
 	  .driver_info		= UVC_QUIRK_STREAM_NO_FID },
+	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
+				| USB_DEVICE_ID_MATCH_INT_INFO,
+	  .idVendor		= 0x174f,
+	  .idProduct		= 0x8a12,
+	  .bInterfaceClass	= USB_CLASS_VIDEO,
+	  .bInterfaceSubClass	= 1,
+	  .bInterfaceProtocol	= 0,
+	  .driver_info		= UVC_QUIRK_STREAM_NO_FID },
 	/* Syntek (Asus F9SG) */
 	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
 				| USB_DEVICE_ID_MATCH_INT_INFO,
@@ -2112,6 +2281,14 @@ static struct usb_device_id uvc_ids[] = {
 	  .bInterfaceSubClass	= 1,
 	  .bInterfaceProtocol	= 0,
 	  .driver_info		= UVC_QUIRK_PROBE_MINMAX },
+	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
+				| USB_DEVICE_ID_MATCH_INT_INFO,
+	  .idVendor		= 0x18ec,
+	  .idProduct		= 0x3290,
+	  .bInterfaceClass	= USB_CLASS_VIDEO,
+	  .bInterfaceSubClass	= 1,
+	  .bInterfaceProtocol	= 0,
+	  .driver_info		= UVC_QUIRK_PROBE_DEF },
 	/* Bodelin ProScopeHR */
 	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
 				| USB_DEVICE_ID_MATCH_DEV_HI

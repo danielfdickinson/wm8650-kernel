@@ -279,7 +279,7 @@ static int ehci_pci_suspend(struct usb_hcd *hcd)
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	unsigned long		flags;
 	int			rc = 0;
-
+	u16 pmc_enable = 0;
 	if (time_before(jiffies, ehci->next_statechange))
 		msleep(10);
 
@@ -305,6 +305,10 @@ static int ehci_pci_suspend(struct usb_hcd *hcd)
 
 	// could save FLADJ in case of Vaux power loss
 	// ... we'd only use it to handle clock skew
+      //CharlesTu,for PM 
+	pci_read_config_word(to_pci_dev(hcd->self.controller), 0x84, &pmc_enable);
+	pmc_enable |= 0x103;
+	pci_write_config_word(to_pci_dev(hcd->self.controller), 0x84, pmc_enable);
 
 	return rc;
 }
@@ -313,6 +317,11 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	struct pci_dev		*pdev = to_pci_dev(hcd->self.controller);
+	u16 pmc_enable = 0;
+ 	 //CharlesTu,for PM 
+	pci_read_config_word(pdev, 0x84, &pmc_enable);
+	pmc_enable &= ~0x03;
+	pci_write_config_word(pdev, 0x84, pmc_enable);
 
 	// maybe restore FLADJ
 
@@ -321,7 +330,10 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 
 	/* Mark hardware accessible again as we are out of D3 state by now */
 	set_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
-
+	/*CharlesTu,2011.01,21,move ahead,due to vbus lost when suspend
+	* when resume ehci hub activate ,type= HUB_RESET_RESUME
+	*/
+  usb_root_hub_lost_power(hcd->self.root_hub);
 	/* If CF is still set and we aren't resuming from hibernation
 	 * then we maintained PCI Vaux power.
 	 * Just undo the effect of ehci_pci_suspend().
@@ -336,8 +348,8 @@ static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 		ehci_readl(ehci, &ehci->regs->intr_enable);
 		return 0;
 	}
-
-	usb_root_hub_lost_power(hcd->self.root_hub);
+  //CharlesTu
+	//usb_root_hub_lost_power(hcd->self.root_hub);
 
 	/* Else reset, to cope with power loss or flush-to-storage
 	 * style "resume" having let BIOS kick in during reboot.

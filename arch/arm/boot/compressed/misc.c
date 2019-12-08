@@ -27,13 +27,13 @@ unsigned int __machine_arch_type;
 #define putstr printf
 #else
 
-static void putstr(const char *ptr);
+//static void putstr(const char *ptr);
 
 #include <mach/uncompress.h>
 
 #ifdef CONFIG_DEBUG_ICEDCC
 
-#ifdef CONFIG_CPU_V6
+#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V7)
 
 static void icedcc_putc(int ch)
 {
@@ -86,6 +86,7 @@ static void icedcc_putc(int ch)
 #define flush()	do { } while (0)
 #endif
 
+#if 0
 static void putstr(const char *ptr)
 {
 	char c;
@@ -99,6 +100,7 @@ static void putstr(const char *ptr)
 	flush();
 }
 
+#endif
 #endif
 
 #define __ptr_t void *

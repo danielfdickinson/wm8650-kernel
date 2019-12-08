@@ -74,6 +74,20 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
 
 	format = &stream->format[ctrl->bFormatIndex - 1];
 
+	if (format->flags & UVC_FMT_FLAG_MPEG2TS_STREAM)
+	{
+#if 1	//Statically decide size		
+		ctrl->dwMaxVideoFrameSize = UVC_MPEG2TS_STREAM_BUF_SIZE;
+#else	//Dynamically decide size (according to max. packet size)		
+		if (video->dev->udev->speed == USB_SPEED_HIGH)
+			ctrl->dwMaxVideoFrameSize = video->streaming->maxpsize * 8 *10;
+		else
+			ctrl->dwMaxVideoFrameSize = video->streaming->maxpsize * 10;
+
+		uvc_trace(UVC_TRACE_FORMAT, "Setting MPEG2-TS video buffer size to %u.\n",
+			ctrl->dwMaxVideoFrameSize);
+#endif
+	} 
 	for (i = 0; i < format->nframes; ++i) {
 		if (format->frame[i].bFrameIndex == ctrl->bFrameIndex) {
 			frame = &format->frame[i];
@@ -401,6 +415,13 @@ static int uvc_video_decode_start(struct uvc_streaming *stream,
 		return -ENODATA;
 	}
 
+	if (stream->cur_format->flags & UVC_FMT_FLAG_MPEG2TS_STREAM)
+	{
+		buf->state = UVC_BUF_STATE_ACTIVE;
+		//suppose the header length won't change during streaming, so save it.
+		stream->cur_format->uvc_header_size = data[0]; 
+		return data[0]; // driectly return header length;		
+	}
 	/* Synchronize to the input stream by waiting for the FID bit to be
 	 * toggled when the the buffer state is not UVC_BUF_STATE_ACTIVE.
 	 * stream->last_fid is initialized to -1, so the first isochronous
@@ -466,17 +487,32 @@ static void uvc_video_decode_data(struct uvc_streaming *stream,
 	nbytes = min((unsigned int)len, maxlen);
 	memcpy(mem, data, nbytes);
 	buf->buf.bytesused += nbytes;
-
-	/* Complete the current frame if the buffer size was exceeded. */
-	if (len > maxlen) {
-		uvc_trace(UVC_TRACE_FRAME, "Frame complete (overflow).\n");
-		buf->state = UVC_BUF_STATE_DONE;
+	if (stream->cur_format->flags & UVC_FMT_FLAG_MPEG2TS_STREAM)
+	{
+		if ((buf->buf.length - buf->buf.bytesused ) < 
+		    (stream->maxpsize - stream->cur_format->uvc_header_size))
+		{
+			uvc_trace(UVC_TRACE_FRAME, "MPEG2-TS buffer full (%d).\n",
+					   (buf->buf.length - buf->buf.bytesused));
+			buf->state = UVC_BUF_STATE_DONE;
+		}
+	}
+	else
+	{
+		/* Complete the current frame if the buffer size was exceeded. */
+		if (len > maxlen) {
+			uvc_trace(UVC_TRACE_FRAME, "Frame complete (overflow).\n");
+			buf->state = UVC_BUF_STATE_DONE;
+		}
 	}
 }
 
 static void uvc_video_decode_end(struct uvc_streaming *stream,
 		struct uvc_buffer *buf, const __u8 *data, int len)
 {
+	if (stream->cur_format->flags & UVC_FMT_FLAG_MPEG2TS_STREAM) 
+		return;
+	
 	/* Mark the buffer as done if the EOF marker is set. */
 	if (data[1] & UVC_STREAM_EOF && buf->buf.bytesused != 0) {
 		uvc_trace(UVC_TRACE_FRAME, "Frame complete (EOF found).\n");
@@ -924,6 +960,8 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 	int intfnum = stream->intfnum;
 	unsigned int bandwidth, psize, i;
 	int ret;
+	unsigned int candidate_psize = 0; 
+	struct usb_host_endpoint *candidate_ep = NULL; 
 
 	stream->last_fid = -1;
 	stream->bulk.header_size = 0;
@@ -942,6 +980,8 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		}
 
 		for (i = 0; i < intf->num_altsetting; ++i) {
+			uvc_trace(UVC_TRACE_FORMAT, "uvcvideo: alt i = %d\n", i); 
+			
 			alts = &intf->altsetting[i];
 			ep = uvc_find_endpoint(alts,
 				stream->header.bEndpointAddress);
@@ -951,9 +991,51 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 			/* Check if the bandwidth is high enough. */
 			psize = le16_to_cpu(ep->desc.wMaxPacketSize);
 			psize = (psize & 0x07ff) * (1 + ((psize >> 11) & 3));
+			
+			uvc_trace(UVC_TRACE_FORMAT, "uvcvideo: psize = %d\n", psize); 
+			uvc_trace(UVC_TRACE_FORMAT, "uvcvideo: bandwidth = %d\n", bandwidth); 
+			uvc_trace(UVC_TRACE_FORMAT, "uvcvideo: candidate_psize = %d\n", candidate_psize); 
+			
+#if 1 
+		  if (stream->cur_format->flags & UVC_FMT_FLAG_MPEG2TS_STREAM) 
+		  {
+			 if (psize >= bandwidth)
+			 {
+			 	if (candidate_psize && psize > candidate_psize)
+				{
+					i--;
+					ep = candidate_ep;
+					break;
+				}
+				else
+				{
+					candidate_psize = psize;
+					candidate_ep = ep;
+				}				
+			 }
+			 else
+			 {
+				if (candidate_psize)				
+				{
+					i--;
+					ep = candidate_ep;
+					break;
+				}
+			 }
+		  }
+		  else
+		  {
+		    if (psize >= bandwidth)
+				break;		    
+		  }
+#else
+			//Original
 			if (psize >= bandwidth)
 				break;
+#endif 
 		}
+		
+		uvc_trace(UVC_TRACE_FORMAT, "uvcvideo: final alt i = %d\n", i); 
 
 		if (i >= intf->num_altsetting)
 			return -EIO;

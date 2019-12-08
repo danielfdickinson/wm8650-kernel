@@ -192,6 +192,8 @@ struct mtd_info {
 
 	int (*read_oob) (struct mtd_info *mtd, loff_t from,
 			 struct mtd_oob_ops *ops);
+	int (*read_bbinfo_facmk) (struct mtd_info *mtd, loff_t from,
+                         struct mtd_oob_ops *ops); //Vincent 20090526
 	int (*write_oob) (struct mtd_info *mtd, loff_t to,
 			 struct mtd_oob_ops *ops);
 

@@ -486,4 +486,44 @@ config MTD_NAND_W90P910
 	  This enables the driver for the NAND Flash on evaluation board based
 	  on w90p910.
 
+config MTD_NAND_WMT
+        tristate "NAND Flash support for WMT SoC"
+#       depends on ARCH_VT8500
+        help
+          This enables the NAND flash controller on the WMT
+          SoCs
+
+          No board specific support is done by this driver, each board
+          must advertise a platform_device for the driver to attach.
+
+config MTD_NAND_CHIP_NUM
+        int "NAND Flash numbers select verbosity (1 = CE0, 2 = CE0,CE1)"
+        depends on MTD_NAND_WMT
+        default "1"
+        help
+          Determines the verbosity numbers of nand chip supported by WMT.
+
+config MTD_NAND_WMT_HWECC
+        bool "WMT NAND Hardware ECC"
+        depends on MTD_NAND_WMT
+        help
+          Enable the use of the WMT's internal ECC generator when
+          using NAND.
+
+config MTD_NAND_PAGE_SIZE
+        int "NAND Flash Page Size select verbosity (512, 2048, 4096)"
+        depends on MTD_NAND_WMT
+        default "2048"
+        help
+          Determines the verbosity pagesize of nand chip supported by WMT.
+
+config MTD_NAND_HM_ECC
+        int "WMT NAND Hardware ECC Algorithm select verbosity(Harming ECC: =1, BCH ECC: =2)"
+        depends on MTD_NAND_WMT
+        default "2"
+        help
+          Enable the use of the WMT's internal ECC generator when
+          using NAND.
+        
+
 endif # MTD_NAND

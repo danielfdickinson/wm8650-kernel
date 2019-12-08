@@ -42,4 +42,10 @@ obj-$(CONFIG_TOUCHSCREEN_WM97XX_ATMEL)	+= atmel-wm97xx.o
 obj-$(CONFIG_TOUCHSCREEN_WM97XX_MAINSTONE)	+= mainstone-wm97xx.o
 obj-$(CONFIG_TOUCHSCREEN_WM97XX_ZYLONITE)	+= zylonite-wm97xx.o
 obj-$(CONFIG_TOUCHSCREEN_W90X900)	+= w90p910_ts.o
+obj-$(CONFIG_TOUCHSCREEN_WMT) += wmt/
+obj-$(CONFIG_TOUCHSCREEN_ROHM) += rohm/
+obj-$(CONFIG_TOUCHSCREEN_UTK) += uor6150/
+obj-$(CONFIG_TOUCHSCREEN_ITE) += ite/
 obj-$(CONFIG_TOUCHSCREEN_PCAP)		+= pcap_ts.o
+# vt1603 touch panel driver
+obj-$(CONFIG_WMT_VT1603A_TOUCHSCREEN) += vt1603a_ts/

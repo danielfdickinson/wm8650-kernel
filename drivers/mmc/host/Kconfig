@@ -357,3 +357,11 @@ config MMC_VIA_SDMMC
 	  If you have a controller with this interface, say Y or M here.
 
 	  If unsure, say N.
+
+config MMC_ATSMB	
+	tristate "WonderMedia ATSMB(AHB To MMC/SD BUS)"	
+	help	  
+		This selects the WMT Secure digital and Multimedia card Interface.	  
+		If you have a machine with WonderMedia ATSMB, say Y or M here.	  	  
+
+		If unsure, say N.	  

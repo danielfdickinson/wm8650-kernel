@@ -13,7 +13,7 @@ typedef unsigned int dmach_t;
 #define MAX_DMA_ADDRESS	0xffffffff
 #endif
 
-#ifdef CONFIG_ISA_DMA_API
+//#ifdef CONFIG_ISA_DMA_API
 /*
  * This is used to support drivers written for the x86 ISA DMA API.
  * It should not be re-used except for that purpose.
@@ -22,7 +22,7 @@ typedef unsigned int dmach_t;
 #include <asm/system.h>
 #include <asm/scatterlist.h>
 
-#include <mach/isa-dma.h>
+//#include <mach/isa-dma.h>
 
 /*
  * The DMA modes reflect the settings for the ISA DMA controller
@@ -147,6 +147,6 @@ extern int isa_dma_bridge_buggy;
 #define isa_dma_bridge_buggy    (0)
 #endif
 
-#endif /* CONFIG_ISA_DMA_API */
+//#endif /* CONFIG_ISA_DMA_API */
 
 #endif /* __ASM_ARM_DMA_H */

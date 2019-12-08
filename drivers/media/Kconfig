@@ -2,14 +2,8 @@
 # Multimedia device configuration
 #
 
-menuconfig MEDIA_SUPPORT
-	tristate "Multimedia support"
+menu "Multimedia devices"
 	depends on HAS_IOMEM
-	help
-	  If you want to use Video for Linux, DVB for Linux, or DAB adapters,
-	  enable this option and other options below.
-
-if MEDIA_SUPPORT
 
 comment "Multimedia core support"
 
@@ -123,7 +117,7 @@ source "drivers/media/dvb/Kconfig"
 config DAB
 	boolean "DAB adapters"
 	---help---
-	  Allow selecting support for Digital Audio Broadcasting (DAB)
+	  Allow selecting support for for Digital Audio Broadcasting (DAB)
 	  Receiver adapters.
 
 if DAB
@@ -142,4 +136,33 @@ config USB_DABUSB
 	  module will be called dabusb.
 endif # DAB
 
-endif # MEDIA_SUPPORT
+config WMT_VIDEO_DECODE
+	tristate "WonderMedia Video Decoder"
+	---help---
+	  Say Y here to use WonderMedia hardware decoder to decode video
+
+menu "WonderMedia Video Decoder"
+	depends on WMT_VIDEO_DECODE		
+source "drivers/media/video/wmt/jpeg/Kconfig"
+source "drivers/media/video/wmt/mpeg2/Kconfig"
+source "drivers/media/video/wmt/mpeg4/Kconfig"
+source "drivers/media/video/wmt/h264/Kconfig"
+source "drivers/media/video/wmt/Kconfig"
+endmenu
+config WMT_V4L2
+	tristate "WonderMedia V4L2 cmos"
+        default y	
+        ---help---
+	  Say Y here to use WonderMedia V4L2 cmos
+config WMT_VIDEO_ENCODE
+	tristate "WonderMedia Video Encoder"
+	---help---
+	  Say Y here to use WonderMedia hardware encoder to encode video
+
+menu "WonderMedia Video Encoder"
+	depends on WMT_VIDEO_ENCODE		
+source "drivers/media/video/wmt/encode/jpeg/Kconfig"
+endmenu
+
+endmenu
+

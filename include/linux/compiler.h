@@ -205,9 +205,16 @@ void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
  * Mark functions that are referenced only in inline assembly as __used so
  * the code is emitted even though it appears to be unreferenced.
  */
+#if 0
 #ifndef __used
 # define __used			/* unimplemented */
 #endif
+#endif
+
+#ifndef __attribute_used__
+# define __attribute_used__     /* unimplemented */
+#endif
+
 
 #ifndef __maybe_unused
 # define __maybe_unused		/* unimplemented */

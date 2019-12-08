@@ -934,7 +934,9 @@ extern struct bus_type usb_bus_type;
 struct usb_class_driver {
 	char *name;
 	char *(*devnode)(struct device *dev, mode_t *mode);
-	const struct file_operations *fops;
+	//CharlesTu,2011.01.24,remove warning message
+	//const struct file_operations *fops;
+	struct file_operations *fops;
 	int minor_base;
 };
 
@@ -986,6 +988,11 @@ extern int usb_disabled(void);
 #define URB_DIR_IN		0x0200	/* Transfer from device to host */
 #define URB_DIR_OUT		0
 #define URB_DIR_MASK		URB_DIR_IN
+
+
+/*{CharlesTu, 2010.08.26,  for test mode */
+#define URB_HCD_DRIVER_TEST     0xFFFF  /* Do NOT hand back or free this URB */
+/*CharlesTu}*/
 
 struct usb_iso_packet_descriptor {
 	unsigned int offset;
@@ -1224,6 +1231,12 @@ struct urb {
 	void *context;			/* (in) context for completion */
 	usb_complete_t complete;	/* (in) completion routine */
 	struct usb_iso_packet_descriptor iso_frame_desc[0];
+	
+	//gri add
+	int flag_use_tmp;		/* (in) associated data buffer */
+	void *tmp_transfer_buffer;		/* (in) associated data buffer */
+	dma_addr_t tmp_transfer_dma;	/* (in) dma addr for transfer_buffer */	
+	
 					/* (in) ISO ONLY */
 };
 

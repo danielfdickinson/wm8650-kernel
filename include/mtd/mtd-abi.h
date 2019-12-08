@@ -88,6 +88,13 @@ struct otp_info {
 	__u32 locked;
 };
 
+struct env_info_user {
+    char varname[200];
+    char *varpoint;
+    char varval[200];
+    int varlen;
+};
+
 #define MEMGETINFO		_IOR('M', 1, struct mtd_info_user)
 #define MEMERASE		_IOW('M', 2, struct erase_info_user)
 #define MEMWRITEOOB		_IOWR('M', 3, struct mtd_oob_buf)
@@ -110,6 +117,8 @@ struct otp_info {
 #define MEMERASE64		_IOW('M', 20, struct erase_info_user64)
 #define MEMWRITEOOB64		_IOWR('M', 21, struct mtd_oob_buf64)
 #define MEMREADOOB64		_IOWR('M', 22, struct mtd_oob_buf64)
+#define MEMGETENV		_IOR('M', 128, struct env_info_user)
+#define MEMSETENV		_IOR('M', 129, struct env_info_user)
 
 /*
  * Obsolete legacy interface. Keep it in order not to break userspace

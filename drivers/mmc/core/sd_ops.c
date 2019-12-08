@@ -20,11 +20,18 @@
 #include "core.h"
 #include "sd_ops.h"
 
+#if 0
+#define DBG(x...)	printk(KERN_ALERT x)
+#else
+#define DBG(x...)	do { } while (0)
+#endif
+
 static int mmc_app_cmd(struct mmc_host *host, struct mmc_card *card)
 {
 	int err;
 	struct mmc_command cmd;
-
+	DBG("[%s] s\n",__func__);
+	
 	BUG_ON(!host);
 	BUG_ON(card && (card->host != host));
 
@@ -32,20 +39,27 @@ static int mmc_app_cmd(struct mmc_host *host, struct mmc_card *card)
 
 	if (card) {
 		cmd.arg = card->rca << 16;
-		cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_AC;
+//		cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_AC;
+		cmd.flags = MMC_RSP_R1 | MMC_CMD_AC;	//zhf: mark SPI mode temporarily by James Tian
 	} else {
 		cmd.arg = 0;
-		cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_BCR;
+//		cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_BCR;
+		cmd.flags = MMC_RSP_R1 | MMC_CMD_AC;	//zhf: mark SPI mode temporarily by James Tian
 	}
 
 	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (err)
+	if (err) {
+		DBG("[%s] e1\n",__func__);
 		return err;
+	}
 
 	/* Check that card supported application commands */
-	if (!mmc_host_is_spi(host) && !(cmd.resp[0] & R1_APP_CMD))
+	if (!mmc_host_is_spi(host) && !(cmd.resp[0] & R1_APP_CMD)) {
+		DBG("[%s] e2\n",__func__);
 		return -EOPNOTSUPP;
+	}
 
+	DBG("[%s] e3\n",__func__);
 	return 0;
 }
 
@@ -65,10 +79,10 @@ static int mmc_app_cmd(struct mmc_host *host, struct mmc_card *card)
 int mmc_wait_for_app_cmd(struct mmc_host *host, struct mmc_card *card,
 	struct mmc_command *cmd, int retries)
 {
-	struct mmc_request mrq;
-
+	struct mmc_request mrq;	
 	int i, err;
 
+    DBG("[%s] s\n",__func__);
 	BUG_ON(!cmd);
 	BUG_ON(retries < 0);
 
@@ -111,7 +125,7 @@ int mmc_wait_for_app_cmd(struct mmc_host *host, struct mmc_card *card,
 				break;
 		}
 	}
-
+	DBG("[%s] e\n",__func__);
 	return err;
 }
 
@@ -121,7 +135,8 @@ int mmc_app_set_bus_width(struct mmc_card *card, int width)
 {
 	int err;
 	struct mmc_command cmd;
-
+	DBG("[%s] s\n",__func__);
+	
 	BUG_ON(!card);
 	BUG_ON(!card->host);
 
@@ -138,13 +153,16 @@ int mmc_app_set_bus_width(struct mmc_card *card, int width)
 		cmd.arg = SD_BUS_WIDTH_4;
 		break;
 	default:
+		DBG("[%s] e1\n",__func__);
 		return -EINVAL;
 	}
 
 	err = mmc_wait_for_app_cmd(card->host, card, &cmd, MMC_CMD_RETRIES);
-	if (err)
+	if (err) {
+		DBG("[%s] e2\n",__func__);
 		return err;
-
+	}
+	DBG("[%s] e3\n",__func__);
 	return 0;
 }
 
@@ -152,7 +170,7 @@ int mmc_send_app_op_cond(struct mmc_host *host, u32 ocr, u32 *rocr)
 {
 	struct mmc_command cmd;
 	int i, err = 0;
-
+	DBG("[%s] s\n",__func__);
 	BUG_ON(!host);
 
 	memset(&cmd, 0, sizeof(struct mmc_command));
@@ -162,7 +180,8 @@ int mmc_send_app_op_cond(struct mmc_host *host, u32 ocr, u32 *rocr)
 		cmd.arg = ocr & (1 << 30); /* SPI only defines one bit */
 	else
 		cmd.arg = ocr;
-	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R3 | MMC_CMD_BCR;
+//	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R3 | MMC_CMD_BCR;
+	cmd.flags = MMC_RSP_R3 | MMC_CMD_BCR;	//zhf: mark SPI mode temporarily by James Tian
 
 	for (i = 100; i; i--) {
 		err = mmc_wait_for_app_cmd(host, NULL, &cmd, MMC_CMD_RETRIES);
@@ -189,7 +208,7 @@ int mmc_send_app_op_cond(struct mmc_host *host, u32 ocr, u32 *rocr)
 
 	if (rocr && !mmc_host_is_spi(host))
 		*rocr = cmd.resp[0];
-
+	DBG("[%s] e\n",__func__);
 	return err;
 }
 
@@ -199,7 +218,7 @@ int mmc_send_if_cond(struct mmc_host *host, u32 ocr)
 	int err;
 	static const u8 test_pattern = 0xAA;
 	u8 result_pattern;
-
+	DBG("[%s] s\n",__func__);
 	/*
 	 * To support SD 2.0 cards, we must always invoke SD_SEND_IF_COND
 	 * before SD_APP_OP_COND. This command will harmlessly fail for
@@ -207,20 +226,26 @@ int mmc_send_if_cond(struct mmc_host *host, u32 ocr)
 	 */
 	cmd.opcode = SD_SEND_IF_COND;
 	cmd.arg = ((ocr & 0xFF8000) != 0) << 8 | test_pattern;
-	cmd.flags = MMC_RSP_SPI_R7 | MMC_RSP_R7 | MMC_CMD_BCR;
+//	cmd.flags = MMC_RSP_SPI_R7 | MMC_RSP_R7 | MMC_CMD_BCR;
+	cmd.flags = MMC_RSP_R7 | MMC_CMD_BCR;	//zhf: mark SPI mode temporarily by James Tian
 
 	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (err)
+	if (err) {
+		DBG("[%s] e1\n",__func__);
 		return err;
+	}
 
 	if (mmc_host_is_spi(host))
 		result_pattern = cmd.resp[1] & 0xFF;
 	else
 		result_pattern = cmd.resp[0] & 0xFF;
 
-	if (result_pattern != test_pattern)
+	if (result_pattern != test_pattern) {
+		DBG("[%s] e2\n",__func__);
 		return -EIO;
+	}
 
+	DBG("[%s] e3\n",__func__);
 	return 0;
 }
 
@@ -228,7 +253,8 @@ int mmc_send_relative_addr(struct mmc_host *host, unsigned int *rca)
 {
 	int err;
 	struct mmc_command cmd;
-
+	DBG("[%s] s\n",__func__);
+	
 	BUG_ON(!host);
 	BUG_ON(!rca);
 
@@ -239,11 +265,14 @@ int mmc_send_relative_addr(struct mmc_host *host, unsigned int *rca)
 	cmd.flags = MMC_RSP_R6 | MMC_CMD_BCR;
 
 	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
-	if (err)
+	if (err) {
+		DBG("[%s] e1\n",__func__);
 		return err;
+	}
 
 	*rca = cmd.resp[0] >> 16;
 
+	DBG("[%s] e2\n",__func__);
 	return 0;
 }
 
@@ -254,7 +283,8 @@ int mmc_app_send_scr(struct mmc_card *card, u32 *scr)
 	struct mmc_command cmd;
 	struct mmc_data data;
 	struct scatterlist sg;
-
+	DBG("[%s] s\n",__func__);
+	
 	BUG_ON(!card);
 	BUG_ON(!card->host);
 	BUG_ON(!scr);
@@ -262,8 +292,10 @@ int mmc_app_send_scr(struct mmc_card *card, u32 *scr)
 	/* NOTE: caller guarantees scr is heap-allocated */
 
 	err = mmc_app_cmd(card->host, card);
-	if (err)
+	if (err) {
+		DBG("[%s] e1\n",__func__);
 		return err;
+	}
 
 	memset(&mrq, 0, sizeof(struct mmc_request));
 	memset(&cmd, 0, sizeof(struct mmc_command));
@@ -274,7 +306,8 @@ int mmc_app_send_scr(struct mmc_card *card, u32 *scr)
 
 	cmd.opcode = SD_APP_SEND_SCR;
 	cmd.arg = 0;
-	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+//	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+	cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;	//zhf: mark SPI mode temporarily by James Tian
 
 	data.blksz = 8;
 	data.blocks = 1;
@@ -288,14 +321,19 @@ int mmc_app_send_scr(struct mmc_card *card, u32 *scr)
 
 	mmc_wait_for_req(card->host, &mrq);
 
-	if (cmd.error)
+	if (cmd.error) {
+		DBG("[%s] e2\n",__func__);
 		return cmd.error;
-	if (data.error)
+	}
+	if (data.error) {
+		DBG("[%s] e3\n",__func__);
 		return data.error;
+	}
 
 	scr[0] = be32_to_cpu(scr[0]);
 	scr[1] = be32_to_cpu(scr[1]);
 
+	DBG("[%s] e4\n",__func__);
 	return 0;
 }
 
@@ -306,7 +344,8 @@ int mmc_sd_switch(struct mmc_card *card, int mode, int group,
 	struct mmc_command cmd;
 	struct mmc_data data;
 	struct scatterlist sg;
-
+	DBG("[%s] s\n",__func__);
+	
 	BUG_ON(!card);
 	BUG_ON(!card->host);
 
@@ -326,7 +365,8 @@ int mmc_sd_switch(struct mmc_card *card, int mode, int group,
 	cmd.arg = mode << 31 | 0x00FFFFFF;
 	cmd.arg &= ~(0xF << (group * 4));
 	cmd.arg |= value << (group * 4);
-	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+//	cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+	cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;	//zhf: mark SPI mode temporarily by James Tian
 
 	data.blksz = 64;
 	data.blocks = 1;
@@ -340,11 +380,16 @@ int mmc_sd_switch(struct mmc_card *card, int mode, int group,
 
 	mmc_wait_for_req(card->host, &mrq);
 
-	if (cmd.error)
+	if (cmd.error) {
+		DBG("[%s] e1\n",__func__);
 		return cmd.error;
-	if (data.error)
+	}
+	if (data.error) {
+		DBG("[%s] e2\n",__func__);
 		return data.error;
+	}
 
+	DBG("[%s] e3\n",__func__);
 	return 0;
 }
 

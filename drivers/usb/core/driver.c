@@ -1176,9 +1176,10 @@ static int usb_suspend_both(struct usb_device *udev, pm_message_t msg)
 	if (udev->state == USB_STATE_NOTATTACHED ||
 			udev->state == USB_STATE_SUSPENDED)
 		goto done;
-
-	udev->do_remote_wakeup = device_may_wakeup(&udev->dev);
-
+       //CharlesTu, disable remote wakeup
+	//udev->do_remote_wakeup = device_may_wakeup(&udev->dev);
+	udev->do_remote_wakeup = 0;
+	
 	if (msg.event & PM_EVENT_AUTO) {
 		status = autosuspend_check(udev, 0);
 		if (status < 0)

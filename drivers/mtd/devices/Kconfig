@@ -307,5 +307,16 @@ config MTD_DOCPROBE_55AA
 	  LinuxBIOS or if you need to recover a DiskOnChip Millennium on which
 	  you have managed to wipe the first block.
 
+config MTD_WMT_SF
+	tristate "WonderMedia SF Support"
+	depends on MTD
+	help
+	  Download files using IOCTL to SPI Flash.
+config MTD_WMT_NOR
+	tristate "WonderMedia NOR Support"
+	depends on MTD
+	help
+	  Nor flash
+
 endmenu
 

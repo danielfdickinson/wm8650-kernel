@@ -481,12 +481,15 @@ static void dpm_drv_wdclr(struct device *dev)
  * Execute the appropriate "resume" callback for all devices whose status
  * indicates that they are suspended.
  */
+/*CharlesTu,2011.01.21,set usb resume flag.*/
+extern unsigned char usb_resume_flag;  
 static void dpm_resume(pm_message_t state)
 {
 	struct list_head list;
 
 	INIT_LIST_HEAD(&list);
 	mutex_lock(&dpm_list_mtx);
+	usb_resume_flag = 1; //CharlesTu
 	while (!list_empty(&dpm_list)) {
 		struct device *dev = to_device(dpm_list.next);
 
@@ -510,6 +513,7 @@ static void dpm_resume(pm_message_t state)
 			list_move_tail(&dev->power.entry, &list);
 		put_device(dev);
 	}
+	usb_resume_flag = 0;//CharlesTu
 	list_splice(&list, &dpm_list);
 	mutex_unlock(&dpm_list_mtx);
 }
