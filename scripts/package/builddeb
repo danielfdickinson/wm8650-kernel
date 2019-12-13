@@ -69,8 +69,9 @@ else
 	fi
 fi
 
-if grep -q '^CONFIG_MODULES=y' .config ; then
-	INSTALL_MOD_PATH="$tmpdir" make KBUILD_SRC= modules_install
+if grep -q '^CONFIG_MODULES=y' ${objtree}/.config ; then
+	INSTALL_MOD_PATH="$tmpdir" make -j KBUILD_SRC= modules_install
+	if [ -s "${objtree}/pkg-backports-flags" ]; then INSTALL_MOD_PATH="$tmpdir" KERNELRELEASE= make $(cat "${objtree}/pkg-backports-flags") install; fi
 	if [ "$ARCH" = "um" ] ; then
 		mv "$tmpdir/lib/modules/$version"/* "$tmpdir/usr/lib/uml/modules/$version/"
 		rmdir "$tmpdir/lib/modules/$version"
