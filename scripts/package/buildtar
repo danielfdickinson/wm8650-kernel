@@ -16,8 +16,8 @@ set -e
 # Some variables and settings used throughout the script
 #
 tmpdir="${objtree}/tar-install"
-tarball="${objtree}/linux-${KERNELRELEASE}.tar"
-
+revision=$(cat .version)
+tarball="${objtree}/../linux-${KERNELRELEASE}-${revision}${localver_auto}.tar"
 
 #
 # Figure out how to compress, if requested at all
