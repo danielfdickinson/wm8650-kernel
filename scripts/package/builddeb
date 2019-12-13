@@ -1,14 +1,17 @@
 #!/bin/sh
 #
-# builddeb 1.3
+# builddeb 1.3~cshored1
 # Copyright 2003 Wichert Akkerman <wichert@wiggy.net>
+# Copyright 2019 Daniel Dickinson <cshored@thecshore.com>
 #
-# Simple script to generate a deb package for a Linux kernel. All the
-# complexity of what to do with a kernel after it is installed or removed
-# is left to other scripts and packages: they can install scripts in the
-# /etc/kernel/{pre,post}{inst,rm}.d/ directories (or an alternative location
-# specified in KDEB_HOOKDIR) that will be called on package install and
-# removal.
+# Simple script to generate a deb package for a Linux kernel.  Some care
+# is take to try and get addition and remove of the kernel right, but
+# it's not as complex as the official debian kernel packages.
+# Additional complexity of what to do with a kernel after it is installed
+# or removed can be added by other scripts and packages: they can install
+# scripts in the /etc/kernel/{pre,post}{inst,rm}.d/ directories (or an
+# alternative location specified in KDEB_HOOKDIR) that will be called
+# on package install and removal.
 
 set -e
 
@@ -101,7 +104,368 @@ for script in postinst postrm preinst prerm ; do
 	cat <<EOF > "$tmpdir/DEBIAN/$script"
 #!/bin/sh
 
-set -e
+move_old_out_of_way() {
+	oldkversion=\${1%%~*}
+	newpversion=\${2}
+
+	RET=0
+	# In case of old cruft (shouldn't be there)
+	for kfile in ${KBUILD_IMAGE} System.map config; do
+		if [ -e /boot/\$kfile-\${oldkversion}.\${newpversion} ]; then
+			rm -f /boot/\$kfile-\${oldkversion}.\${newpversion} || RET=1
+		fi
+	done
+	rm -rf /lib/modules/\${oldkversion}.\${newpversion} || RET=1
+	if [ "\$RET" != "0" ]; then
+		echo "WARNING: Failed to move pre-existing backups out of the way." 2>&1
+	else
+		# Move old kernel and modules out of the way
+		for kfile in ${KBUILD_IMAGE} System.map config; do
+			if [ -e /boot/\${kfile}-\${oldkversion} ]; then
+				mv -f /boot/\${kfile}-\${oldkversion} /boot/\${kfile}-\${oldkversion}.\${newpversion} || RET=1
+			fi
+		done
+		if [ -e /lib/modules/\${oldkversion} ]; then
+			mv -f /lib/modules/\${oldkversion} /lib/modules/\${oldkversion}.\${newpversion} || RET=1
+		fi
+	fi
+	if [ "\$RET" != "0" ]; then
+		printf "WARNING: Failed to moved pre-existing files out of the way.\nUsing fallback." >&2
+		exit 1
+	fi
+
+	return 0
+}
+
+remove_out_of_way() {
+	oldkversion=\${1%%~*}
+	newpversion=\${2}
+
+	(
+		set -e
+		echo "
+			/lib/modules/\${oldkversion}.\${newpversion}
+			/boot/${KBUILD_IMAGE}-\${oldkversion}.\${newpversion}
+			/boot/System.map-\${oldkversion}.\${newpversion}
+			/boot/config-\${oldkversion}.\${newpversion}
+		" | xargs rm -rf
+	) || {
+		printf "WARNING: Failed to remove backups of old versions of kernel." >&2
+	}
+
+	return 0
+}
+
+move_old_back_in_place() {
+	# Run by old package (assuming it had this script during it's creation)
+	newpversion="\$1"
+	oldpversion="\$2"
+	oldkversion="\${2%%~*}"
+
+	RET=0
+	# If backup exists
+	if [ -d /lib/modules/\${oldkversion}.\${newpversion} ]; then
+		# Sanity check - does the target already exist
+		if [ -e /lib/modules/\${oldkversion} ]; then
+			Sanity check - no old backup by the old package exists
+			if [ ! -e /lib/modules/\${oldkversion}.\${oldpversion} ]; then
+				mv -f /lib/modules/\${oldkversion} /lib/modules/\${oldkversion}.\${oldpversion} || RET=1
+			else
+				echo "DPKG ERROR: /lib/modules/\${oldkversion}.\${oldpversion} already exists" >&2
+				RET=1
+			fi
+		fi
+		mv -f /lib/modules/\${oldkversion}.\${newpversion} /lib/modules/\${oldkversion} || RET=1
+
+	fi
+	if [ "\$RET" != "0" ]; then
+		printf "WARNING: Failed to move pre-existing files out of the way when doing\nbackup after failed action.  Falling back to\ndpkg native method. This will probably fail" 2>&1
+	fi
+
+	for kfile in ${KBUILD_IMAGE} System.map config; do
+		if [ -r /boot/\${kfile}-\${oldkversion}.\${newpversion} ]; then
+			# Sanity check - does the target already exist
+			if [ -e /boot/\${kfile}-\${oldkversion}} ]; then
+				Sanity check - no old backup by the old package exists
+				if [ ! -e /boot/\${kfile}-\${oldkversion}.\${oldpversion} ]; then
+					mv -f /boot/\${kfile}-\${oldkversion} /boot/\${kfile}-\${oldkversion}.\${oldpversion} || RET=1
+				else
+					echo "DPKG ERROR: /boot/\${kfile}-\${oldkversion}.\${oldpversion} already exists" >&2
+					RET=1
+				fi
+			fi
+			mv -f /boot/\${kfile}-\${oldkversion}.\${newpversion} /boot/\${kfile}-\${oldkversion} || RET=1
+		fi
+	done
+	if [ "\$RET" != "0" ]; then
+		printf "WARNING: Failed to move pre-existing files out of the way when doing\nbackup after failed action. Falling back to\ndpkg native method. This will probably fail" 2>&1
+	fi
+
+	# If there is no old modules directory things could be very bad
+	if [ ! -d /lib/modules/\${oldkversion} ]; then
+		echo "DPKG ERROR: No '\${oldkversion}' modules directory; system may not boot." >&2
+		exit 1
+	fi
+	if [ ! -r /boot/${KBUILD_IMAGE}-\${oldkversion}  ]; then
+		echo "DPKG ERROR: No '\${oldkversion}' kernel; system may not boot." >&2
+		exit 1
+	fi
+	return 0
+}
+
+remove_depmod_files() {
+	kversion="\${1}"
+
+	# Remove depmod files from /lib/modules/kversion
+	(
+		set -e
+
+		cd /lib/modules/\${kversion}
+		echo "
+			modules.alias
+			modules.alias.bin
+			modules.builtin.bin
+			modules.dep
+			modules.dep.bin
+			modules.devname
+			modules.softdep
+			modules.symbols
+			modules.symbols.bin
+		" | xargs rm -f
+
+		exit 0
+
+	) || {
+		echo "WARNING: Failed to remove generated module dependency files." >&2
+	}
+
+	return 0
+}
+
+case "$script" in
+prerm)
+	case "\$1" in
+	upgrade | \\
+	deconfigure | \\
+	remove)
+		remove_depmod_files "${KERNELRELEASE}" || exit 1
+		if type update-initramfs >/dev/null 2>/dev/null; then
+			update-initramfs -d -k ${KERNELRELEASE} || {
+				echo "WARNING: Failed to remove old initramfs." >&2
+			}
+		fi
+		;;
+	failed-upgrade)
+		krelease="\${1%%!*}"
+
+		( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+			echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+			exit 1
+		}
+		if type update-initramfs 2>/dev/null >/dev/null; then
+			update-initramfs -c -k \${krelease} || {
+				echo "Failed to create initramfs for \${krelease} in prerm failed-upgrade" >&2
+				exit 1
+			}
+		fi
+		;;
+	esac
+	;;
+postrm)
+	case "\$1" in
+	remove | \\
+	purge )
+		rm -f /boot/${KBUILD_IMAGE}-${KERNELRELEASE} || {
+			echo "Failed to purge old kernel from /boot '${KBUILD_IMAGE}-${KERNELRELEASE}'"
+		}
+		;;
+	upgrade)
+		if [ -z "\$2" ]; then
+			echo "DPKG ERROR: configure called without version" >&2
+			exit 1
+		fi
+
+		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
+			# Do depmod
+			krelease="\${2%%~*}"
+
+			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+				exit 1
+			}
+			if type update-initramfs 2>/dev/null >/dev/null; then
+				update-initramfs -c -k \${krelease} || {
+					echo "Failed to create initramfs for \${krelease} in postrm upgrade" >&2
+					exit 1
+				}
+			fi
+
+		else
+			move_old_back_in_place "$packageversion" "\$2" || exit 1
+		fi
+		;;
+	failed-upgrade)
+		if dpkg --compare-versions "\$2" eq "${packageversion}"; then
+			# depmod or initramfs failed; try again
+			krelease="\${2%%~*}"
+
+			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+				exit 1
+			}
+			if type update-initramfs 2>/dev/null >/dev/null; then
+				update-initramfs -d -k \${krelease} || {
+					echo "Failed to delete initramfs for \${krelease} in postrm failed-upgrade" >&2
+					exit 1
+				}
+				update-initramfs -c -k \${krelease} || {
+					echo "Failed to create initramfs for \${krelease} in postrm failed-upgrade" >&2
+					exit 1
+				}
+			fi
+		fi
+		;;
+	abort-install)
+		if [ -z "\$2" ]; then
+			:
+			# Nothing to do here; fresh install
+		else
+			if dpkg --compare-versions "\$2" le "${packageversion}"; then
+				move_old_back_in_place "\$2" "${packageversion}" || exit 1
+			else
+				remove_out_of_way "\$2" "${packageversion}" || exit 1
+			fi
+		fi
+		;;
+	abort-upgrade)
+		if dpkg --compare-versions "\$2" le "${packageversion}"; then
+			move_old_back_in_place "${packageversion}" "\$2" || exit 1
+		else
+			remove_out_of_way "\$2" "${packageversion}" || exit 1
+		fi
+		;;
+	esac
+	;;
+preinst)
+	case "\$1" in
+	install)
+		if [ -z "\$2" ]; then
+			:
+			# Nothing to do here; fresh install
+		else
+			move_old_out_of_way "\$2" "${packageversion}" || exit 1
+		fi
+		;;
+	upgrade)
+		if [ -z "\$2" ]; then
+			echo "DPKG ERROR: preinst upgrade called without old-version" >&2
+			exit 1
+		fi
+		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
+			move_old_out_of_way "${packageversion}" "\$2" || exit 1
+		else
+			move_old_out_of_way "\$2" "${packageversion}" || exit 1
+		fi
+		;;
+	abort-upgrade)
+		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
+			# Clean up from failure
+			remove_depmod_files "\${2%%~*}" || exit 1
+			if type update-initramfs >/dev/null 2>/dev/null; then
+				update-initramfs -d -k "\${2%%~*} " || {
+					echo "Failed to delete initramfs for \${krelease} in postrm failed-upgrade" >&2
+					exit 1
+				}
+			fi
+		fi
+		;;
+	abort-remove)
+		if [ -z "\$2" ]; then
+			echo "DPKG ERROR: preinst abort-{upgrade,remove} called without {old-version,in-favour}" >&2
+			exit 1
+		fi
+		if [ "\$2" != "in-favour" ]; then
+			move_old_back_in_place "\$2" "$packageversion" || exit 1
+		elif [ -n "\$4" ]; then
+			move_old_back_in_place "\$4" "$packageversion" || exit 1
+		else
+			echo "DPKG ERROR: preinst abort-remove called without old-version" >&2
+			exit 1
+		fi
+		;;
+	esac
+	;;
+postinst)
+	case "\$1" in
+	configure)
+		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
+			remove_out_of_way "${packageversion}" "\$2" || exit 1
+		else
+			krelease=${packageversion%%~*}
+			if [ -e /boot/${KBUILD_IMAGE}-\${krelease} ]; then
+				(
+					set -e
+					rm -f /boot/uzImage.bin.old
+					mv -f /boot/uzImage.bin /boot/uzImage.bin.old
+				) || {
+					echo "ERROR: Failed to back up kernel." 2>&1
+					exit 1
+				}
+				cp -f /boot/${KBUILD_IMAGE}-\${krelease} /boot/uzImage.bin || {
+					echo "ERROR: Failed to copy new kernel to running kernel location.  System may not boot!" >&2
+					exit 1
+				}
+			fi
+			remove_out_of_way "\${2}" "${packageversion}" || exit 1
+		fi
+		;;
+	abort-upgrade)
+		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
+			krelease="${packageversion%%~*}"
+			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+				exit 1
+			}
+			if type update-initramfs 2>/dev/null >/dev/null; then
+				update-initramfs -c -k \${krelease} || {
+					echo "Failed to create initramfs for '\${krelease}' in postinst abort-upgrade" >&2
+					exit 1
+				}
+			fi
+		fi
+		;;
+	abort-remove | \
+	abort-deconfigure )
+		( cd /lib/modules && depmod -a ${KERNELRELEASE} || exit 1 ) || {
+			echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+			exit 1
+		}
+		if type update-initramfs 2>/dev/null >/dev/null; then
+			update-initramfs -c -k ${KERNELRELEASE} || {
+				echo "Failed to create initramfs for '${KERNELRELEASE}' in postinst abort-{remove,deconfigure}" >&2
+				exit 1
+			}
+		fi
+		if [ -e /boot/${KBUILD_IMAGE}-${KERNELRELEASE} ]; then
+			(
+				set -e
+
+				rm -f /boot/uzImage.bin.abort.old
+				mv -f /boot/uzImage.bin /boot/uzImage.bin.abort.old
+			) || {
+				echo "ERROR: Failed to back up kernel." 2>&1
+				exit 1
+			}
+
+			cp -f /boot/${KBUILD_IMAGE}-${KERNELRELEASE} /boot/uzImage.bin || {
+				echo "ERROR: Failed to copy old kernel to running kernel location.  System may not boot!" >&2
+				exit 1
+			}
+		fi
+		;;
+	esac
+	;;
+esac
 
 # Pass maintainer script parameters to hook scripts
 export DEB_MAINT_PARAMS="\$*"
