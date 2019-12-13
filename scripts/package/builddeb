@@ -19,22 +19,36 @@ create_package() {
 	cp debian/changelog "$pdir/usr/share/doc/$pname/changelog.Debian"
 	gzip -9 "$pdir/usr/share/doc/$pname/changelog.Debian"
 
-	# Fix ownership and permissions
-	chown -R root:root "$pdir"
-	chmod -R go-w "$pdir"
+	unset KDEB_FAKEROOT
+	export FAKEROOT
+	if type fakeroot 2>/dev/null 1>/dev/null; then
+		KDEB_FAKEROOT=fakeroot
+	elif [ $(id) != "0" ]; then
+		echo "Creating a Debian package require fakeroot or actual root.  Please install fakeroot."
+		return false
+	fi
+	# We need to do all the fake root activities in the same fakeroot session, and we need fakeroot
+	# to build packages as non-root.
+	CC=arm-linux-gnueabi-gcc dpkg-architecture -a armel -c $KDEB_FAKEROOT sh -c "
+		set -e
 
-	# Create the package
-	dpkg-gencontrol -isp -p$pname -P"$pdir"
-	dpkg --build "$pdir" ..
+		# Fix ownership and permissions
+		chown -R root:root '$pdir'
+		chmod -R go-w '$pdir'
+
+		# Create the package
+		dpkg-gencontrol -isp -p'$pname' -P'$pdir'
+		dpkg --build '$pdir' ..
+	"
 }
 
 # Some variables and settings used throughout the script
-version=$KERNELRELEASE
+version=${KERNELVERSION}${localver_file}${LOCALVERSION}
 revision=$(cat .version)
 if [ -n "$KDEB_PKGVERSION" ]; then
 	packageversion=$KDEB_PKGVERSION
 else
-	packageversion=$version-$revision
+	packageversion=${version}${KDEB_EXTRAPKGVER:+~$KDEB_EXTRAPKGVER}-${revision}${localver_auto}
 fi
 tmpdir="$objtree/debian/tmp"
 fwdir="$objtree/debian/fwtmp"
@@ -60,12 +74,12 @@ if [ "$ARCH" = "um" ] ; then
 	cp .config "$tmpdir/usr/share/doc/$packagename/config"
 	gzip "$tmpdir/usr/share/doc/$packagename/config"
 	cp $KBUILD_IMAGE "$tmpdir/usr/bin/linux-$version"
-else 
-	cp System.map "$tmpdir/boot/System.map-$version"
-	cp .config "$tmpdir/boot/config-$version"
+else
+	cp System.map "$tmpdir/boot/System.map-${KERNELRELEASE}"
+	cp .config "$tmpdir/boot/config-${KERNELRELEASE}"
 	# Not all arches include the boot path in KBUILD_IMAGE
-	if ! cp $KBUILD_IMAGE "$tmpdir/boot/vmlinuz-$version"; then
-		cp arch/$ARCH/boot/$KBUILD_IMAGE "$tmpdir/boot/vmlinuz-$version"
+	if ! cp $KBUILD_IMAGE "$tmpdir/boot/${KBUILD_IMAGE}-${KERNELRELEASE}"; then
+		cp arch/$ARCH/boot/$KBUILD_IMAGE "$tmpdir/boot/${KBUILD_IMAGE}-${KERNELRELEASE}"
 	fi
 fi
 

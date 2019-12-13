@@ -20,6 +20,7 @@
 
 # Note that the rpm-pkg target cannot be used with KBUILD_OUTPUT,
 # but the binrpm-pkg target can; for some reason O= gets ignored.
+include $(srctree)/Makefile.localver
 
 # Do we have rpmbuild, otherwise fall back to the older rpm
 RPM := $(shell if [ -x "/usr/bin/rpmbuild" ]; then echo rpmbuild; \
