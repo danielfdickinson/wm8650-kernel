@@ -83,6 +83,13 @@ case "${ARCH}" in
 		[ -f "${objtree}/vmlinux.SYS" ] && cp -v -- "${objtree}/vmlinux.SYS" "${tmpdir}/boot/vmlinux-${KERNELRELEASE}.SYS"
 		[ -f "${objtree}/vmlinux.dsk" ] && cp -v -- "${objtree}/vmlinux.dsk" "${tmpdir}/boot/vmlinux-${KERNELRELEASE}.dsk"
 		;;
+	arm)
+		if [ -f "${KBUILD_IMAGE}" ]; then
+			cp -v -- "${KBUILD_IMAGE}" "${tmpdir}/${KBUILD_IMAGE}-${KERNELRELEASE}"
+		else
+			[ -f "${objtree}/arch/arm/boot/${KBUILD_IMAGE}" ] && cp -v -- "${objtree}/arch/arm/boot/${KBUILD_IMAGE}" "${tmpdir}/boot/${KBUILD_IMAGE}-${KERNELRELEASE}"
+		fi
+		;;
 	*)
 		[ -f "${KBUILD_IMAGE}" ] && cp -v -- "${KBUILD_IMAGE}" "${tmpdir}/boot/vmlinux-kbuild-${KERNELRELEASE}"
 		echo "" >&2
