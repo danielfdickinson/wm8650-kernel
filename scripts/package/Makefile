@@ -88,11 +88,10 @@ clean-dirs += $(objtree)/debian/
 # tarball targets
 # ---------------------------------------------------------------------------
 tar%pkg: FORCE
-	$(MAKE) KBUILD_SRC=
-	$(CONFIG_SHELL) $(srctree)/scripts/package/buildtar $@
+	+make -j15 KBUILD_SRC= _all modules
+	+objtree=$(objtree) srctree=$(srctree) $(CONFIG_SHELL) $(srctree)/scripts/package/buildtar $@
 
 clean-dirs += $(objtree)/tar-install/
-
 
 # Help text displayed when executing 'make help'
 # ---------------------------------------------------------------------------
