@@ -85,7 +85,7 @@ static struct fb_fix_screeninfo __initdata vfb_fix = {
 	.accel          = FB_ACCEL_NONE
 };
 
-struct fb_var_screeninfo __initdata vfb_var = {
+struct fb_var_screeninfo vfb_var = {
 	.xres           = VPP_HD_DISP_RESX,
 	.yres           = VPP_HD_DISP_RESY,
 	.xres_virtual   = VPP_HD_DISP_RESX,
