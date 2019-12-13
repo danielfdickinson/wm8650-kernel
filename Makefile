@@ -938,13 +938,13 @@ endif
 endif
 
 localver-full = $(localver)$(localver-auto)
+localver-file = $(subst $(space),, $(string))
 
 # Store (new) KERNELRELASE string in include/config/kernel.release
-kernelrelease = $(KERNELVERSION)$(localver-full)
+kernelrelease = $(KERNELVERSION)$(localver-file)$(LOCALVERSION)
 include/config/kernel.release: include/config/auto.conf FORCE
 	$(Q)rm -f $@
 	$(Q)echo $(kernelrelease) > $@
-
 
 # Things we need to do before we recursively start building the kernel
 # or the modules are listed in "prepare".
@@ -1260,7 +1260,7 @@ distclean: mrproper
 package-dir	:= $(srctree)/scripts/package
 
 %pkg: include/config/kernel.release FORCE
-	$(Q)$(MAKE) $(build)=$(package-dir) $@
+	$(Q)$(MAKE) KDEB_LOCALVER=$(localver) $(build)=$(package-dir) $@
 rpm: include/config/kernel.release FORCE
 	$(Q)$(MAKE) $(build)=$(package-dir) $@
 
