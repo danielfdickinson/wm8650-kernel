@@ -1,0 +1,92 @@
+VERSION = 2
+PATCHLEVEL = 6
+SUBLEVEL = 32
+EXTRAVERSION = .9
+NAME = Man-Eating Seals of Antiquity
+
+src		:= $(srctree)
+obj		:= $(objtree)
+
+KCONFIG_CONFIG	?= .config
+
+# We need some generic definitions (do not try to remake the file).
+$(srctree)/scripts/Kbuild.include: ;
+include $(srctree)/scripts/Kbuild.include
+
+# Read KERNELRELEASE from include/config/kernel.release (if it exists)
+KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)
+KERNELVERSION = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)$(EXTRAVERSION)
+
+export VERSION PATCHLEVEL SUBLEVEL KERNELRELEASE KERNELVERSION EXTRAVERSION
+
+# Read in config
+-include include/config/auto.conf
+
+# Read in dependencies to all Kconfig* files, make sure to run
+# oldconfig if changes are detected.
+-include include/config/auto.conf.cmd
+
+# The KERNELRELEASE value built here is stored in the file
+# include/config/kernel.release, and is used when executing several
+# make targets, such as "make install" or "make modules_install."
+#
+# The eventual kernel release string consists of the following fields,
+# shown in a hierarchical format to show how smaller parts are concatenated
+# to form the larger and final value, with values coming from places like
+# the Makefile, kernel config options, make command line options and/or
+# SCM tag information.
+#
+#	$(KERNELVERSION)
+#	  $(VERSION)			eg, 2
+#	  $(PATCHLEVEL)			eg, 6
+#	  $(SUBLEVEL)			eg, 18
+#	  $(EXTRAVERSION)		eg, -rc6
+#	$(localver-full)
+#	  $(localver)
+#	    localversion*		(files without backups, containing '~')
+#	    $(CONFIG_LOCALVERSION)	(from kernel config setting)
+#	  $(localver-auto)		(only if CONFIG_LOCALVERSION_AUTO is set)
+#	    ./scripts/setlocalversion	(SCM tag, if one exists)
+#	    $(LOCALVERSION)		(from make command line if provided)
+#
+#  Note how the final $(localver-auto) string is included *only* if the
+# kernel config option CONFIG_LOCALVERSION_AUTO is selected.  Also, at the
+# moment, only git is supported but other SCMs can edit the script
+# scripts/setlocalversion and add the appropriate checks as needed.
+
+pattern = ".*/localversion[^~]*"
+string  = $(shell cat /dev/null \
+	   `find $(objtree) $(srctree) -maxdepth 1 -regex $(pattern) | sort -u`)
+
+localver = $(subst $(space),, $(string) \
+			      $(patsubst "%",%,$(CONFIG_LOCALVERSION)))
+
+# If CONFIG_LOCALVERSION_AUTO is set scripts/setlocalversion is called
+# and if the SCM is know a tag from the SCM is appended.
+# The appended tag is determined by the SCM used.
+#
+# .scmversion is used when generating rpm packages so we do not loose
+# the version information from the SCM when we do the build of the kernel
+# from the copied source
+ifdef CONFIG_LOCALVERSION_AUTO
+
+ifeq ($(wildcard .scmversion),)
+        _localver-auto = $(shell $(CONFIG_SHELL) \
+                         $(srctree)/scripts/setlocalversion $(srctree))
+else
+        _localver-auto = $(shell cat .scmversion 2> /dev/null)
+endif
+
+	localver-auto  = $(LOCALVERSION)$(_localver-auto)
+endif
+
+localver_file = $(subst $(space),, $(string))
+
+localver_full = $(localver)$(localver-auto)
+
+localver_auto = $(localver-auto)
+
+export localver localver_full localver_auto localver_file LOCALVERSION
+
+FORCE:
+
