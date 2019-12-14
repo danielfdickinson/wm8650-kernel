@@ -220,6 +220,10 @@ remove_depmod_files() {
 	(
 		set -e
 
+		if [ ! -d /lib/modules\${kversion} ]; then
+			exit 0
+		fi
+
 		cd /lib/modules/\${kversion}
 		echo "
 			modules.alias
@@ -256,9 +260,9 @@ prerm)
 		fi
 		;;
 	failed-upgrade)
-		krelease="\${1%%!*}"
+		krelease="\${2%%~*}"
 
-		( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+		( depmod \${krelease} || exit 1 ) || {
 			echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
 			exit 1
 		}
@@ -289,7 +293,7 @@ postrm)
 			# Do depmod
 			krelease="\${2%%~*}"
 
-			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+			( depmod \${krelease} || exit 1 ) || {
 				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
 				exit 1
 			}
@@ -309,7 +313,7 @@ postrm)
 			# depmod or initramfs failed; try again
 			krelease="\${2%%~*}"
 
-			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+			( depmod \${krelease} || exit 1 ) || {
 				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
 				exit 1
 			}
@@ -328,7 +332,7 @@ postrm)
 	abort-install)
 		if [ -z "\$2" ]; then
 			:
-			# Nothing to do here; fresh install
+			# Nothing to do here fresh install
 		else
 			if dpkg --compare-versions "\$2" le "${packageversion}"; then
 				move_old_back_in_place "\$2" "${packageversion}" || exit 1
@@ -351,7 +355,7 @@ preinst)
 	install)
 		if [ -z "\$2" ]; then
 			:
-			# Nothing to do here; fresh install
+			# Nothing to do here fresh install
 		else
 			move_old_out_of_way "\$2" "${packageversion}" || exit 1
 		fi
@@ -402,13 +406,26 @@ postinst)
 			remove_out_of_way "${packageversion}" "\$2" || exit 1
 		else
 			krelease=${packageversion%%~*}
+
+			( depmod \${krelease} || exit 1 ) || {
+				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
+				exit 1
+			}
+			if type update-initramfs 2>/dev/null >/dev/null && [ ! -e /boot/initrd.img-\${krelease} ]; then
+				update-initramfs -c -k \${krelease} || {
+					echo "Failed to create initramfs for \${krelease} in prerm failed-upgrade" >&2
+				exit 1
+				}
+			fi
 			if [ -e /boot/${KBUILD_IMAGE}-\${krelease} ]; then
 				(
 					set -e
 					rm -f /boot/uzImage.bin.old
-					mv -f /boot/uzImage.bin /boot/uzImage.bin.old
+					if [ -e /boot/uzImage.bin ]; then
+						mv -f /boot/uzImage.bin /boot/uzImage.bin.old
+					fi
 				) || {
-					echo "ERROR: Failed to back up kernel." 2>&1
+					echo "ERROR: Failed to back up kernel during configure." 2>&1
 					exit 1
 				}
 				cp -f /boot/${KBUILD_IMAGE}-\${krelease} /boot/uzImage.bin || {
@@ -422,7 +439,7 @@ postinst)
 	abort-upgrade)
 		if dpkg --compare-versions "\$2" ge "${packageversion}"; then
 			krelease="${packageversion%%~*}"
-			( cd /lib/modules/\${krelease} && depmod \${krelease} || exit 1 ) || {
+			( depmod \${krelease} || exit 1 ) || {
 				echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
 				exit 1
 			}
@@ -436,7 +453,7 @@ postinst)
 		;;
 	abort-remove | \
 	abort-deconfigure )
-		( cd /lib/modules && depmod -a ${KERNELRELEASE} || exit 1 ) || {
+		( depmod ${KERNELRELEASE} || exit 1 ) || {
 			echo "ERROR: Calculating module dependencies failed; system may not boot!" >&2
 			exit 1
 		}
@@ -451,9 +468,11 @@ postinst)
 				set -e
 
 				rm -f /boot/uzImage.bin.abort.old
-				mv -f /boot/uzImage.bin /boot/uzImage.bin.abort.old
+				if [ -e /boot/uzImage.bin ]; then
+					mv -f /boot/uzImage.bin /boot/uzImage.bin.abort.old
+				fi
 			) || {
-				echo "ERROR: Failed to back up kernel." 2>&1
+				echo "ERROR: Failed to back up kernel during abort-remove or abort-deconfigure." 2>&1
 				exit 1
 			}
 
