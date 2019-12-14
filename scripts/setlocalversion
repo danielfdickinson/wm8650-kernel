@@ -21,12 +21,13 @@ if head=`git rev-parse --verify --short HEAD 2>/dev/null`; then
 
 	# If we are at a tagged commit (like "v2.6.30-rc6"), we ignore it,
 	# because this version is defined in the top level Makefile.
-	if [ -z "`git describe --exact-match 2>/dev/null`" ]; then
+	gitexact="$(git describe --exact-match --tags 2>/dev/null)"
+	if [ -n "${gitexact%%v*}" ] || [ -z "${gitexact}" ]; then
 
 		# If we are past a tagged commit (like "v2.6.30-rc5-302-g72357d5"),
 		# we pretty print it.
-		if atag="`git describe 2>/dev/null`"; then
-			echo "$atag" | awk -F- '{printf("-%05d-%s", $(NF-1),$(NF))}'
+		if atag="`git describe --tags 2>/dev/null`"; then
+			echo "$atag" | awk -F- '{printf("-%04d-%s", $(NF-1),$(F))}'
 
 		# If we don't have a tag at all we print -g{commitish}.
 		else
