@@ -34,9 +34,9 @@
 
 /* debug macro */
 #if 0
-#define dbg1(x) do { printk("DEBUG-CMDLINE-PART: "); printk x; } while(0)
+#define dbg(x) do { printk("DEBUG-CMDLINE-PART: "); printk x; } while(0)
 #else
-#define dbg1(x)
+#define dbg(x)
 #endif
 
 
@@ -194,7 +194,7 @@ static struct mtd_partition * newpart(char *s,
 	parts[this_part].name = extra_mem;
 	extra_mem += name_len + 1;
 
-	dbg1(("partition %d: name <%s>, offset %llx, size %llx, mask flags %x\n",
+	dbg(("partition %d: name <%s>, offset %llx, size %llx, mask flags %x\n",
 	     this_part,
 	     parts[this_part].name,
 	     parts[this_part].offset,
@@ -236,7 +236,7 @@ static int mtdpart_setup_real(char *s)
 		}
 		mtd_id_len = p - mtd_id;
 
-		dbg1(("parsing <%s>\n", p+1));
+		dbg(("parsing <%s>\n", p+1));
 
 		/*
 		 * parse one mtd. have it reserve memory for the
@@ -274,7 +274,7 @@ static int mtdpart_setup_real(char *s)
 		this_mtd->next = partitions;
 		partitions = this_mtd;
 
-		dbg1(("mtdid=<%s> num_parts=<%d>\n",
+		dbg(("mtdid=<%s> num_parts=<%d>\n",
 		     this_mtd->mtd_id, this_mtd->num_parts));
 
 

@@ -43,12 +43,6 @@
 
 MODULE_ALIAS("mmc:block");
 
-#if 0
-#define DBG(x...)	printk(KERN_ALERT x)
-#else
-#define DBG(x...)	do { } while (0)
-#endif
-
 /*
  * max 8 partitions per card
  */
@@ -74,7 +68,7 @@ static DEFINE_MUTEX(open_lock);
 static struct mmc_blk_data *mmc_blk_get(struct gendisk *disk)
 {
 	struct mmc_blk_data *md;
-	DBG("[%s] s\n",__func__);
+
 	mutex_lock(&open_lock);
 	md = disk->private_data;
 	if (md && md->usage == 0)

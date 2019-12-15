@@ -39,12 +39,8 @@
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
-//static struct hlist_head *pid_hash;
-struct hlist_head *pid_hash;//add by jay
-
-//static unsigned int pidhash_shift = 4;
-unsigned int pidhash_shift = 4;//add by jay
-
+static struct hlist_head *pid_hash;
+static unsigned int pidhash_shift = 4;
 struct pid init_struct_pid = INIT_STRUCT_PID;
 
 int pid_max = PID_MAX_DEFAULT;
@@ -386,7 +382,6 @@ struct task_struct *find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
 {
 	return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
 }
-EXPORT_SYMBOL_GPL(find_task_by_pid_ns);
 
 struct task_struct *find_task_by_vpid(pid_t vnr)
 {

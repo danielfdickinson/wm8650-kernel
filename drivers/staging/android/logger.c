@@ -24,7 +24,7 @@
 #include <linux/poll.h>
 #include <linux/time.h>
 #include "logger.h"
-#include <linux/posix-timers.h>
+
 #include <asm/ioctls.h>
 
 /*
@@ -35,7 +35,7 @@
  * mutex 'mutex'.
  */
 struct logger_log {
-	unsigned char *		buffer;	/* the ring buffer itself */
+	unsigned char 		*buffer;/* the ring buffer itself */
 	struct miscdevice	misc;	/* misc device representing the log */
 	wait_queue_head_t	wq;	/* wait queue for readers */
 	struct list_head	readers; /* this log's readers */
@@ -52,7 +52,7 @@ struct logger_log {
  * reference counting. The structure is protected by log->mutex.
  */
 struct logger_reader {
-	struct logger_log *	log;	/* associated log */
+	struct logger_log	*log;	/* associated log */
 	struct list_head	list;	/* entry in logger_log's list */
 	size_t			r_off;	/* current read head offset */
 };
@@ -74,20 +74,7 @@ struct logger_reader {
  * file->logger_log. Thus what file->private_data points at depends on whether
  * or not the file was opened for reading. This function hides that dirtiness.
  */
- extern  struct k_clock posix_clocks[];
-
-/*getThreadMsec - get the runtime of current thread, add by jay*/
- uint32_t getThreadMsec()
-{
-
-    struct timespec tm;
-
-    posix_clocks[CLOCK_THREAD_CPUTIME_ID].clock_get(CLOCK_THREAD_CPUTIME_ID, &tm);
-    return tm.tv_sec * 1000LL + tm.tv_nsec / 1000000;
-	
-
-}
-static inline struct logger_log * file_get_log(struct file *file)
+static inline struct logger_log *file_get_log(struct file *file)
 {
 	if (file->f_mode & FMODE_READ) {
 		struct logger_reader *reader = file->private_data;
@@ -338,24 +325,15 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	struct logger_log *log = file_get_log(iocb->ki_filp);
 	size_t orig = log->w_off;
 	struct logger_entry header;
-	//struct timespec now;//modified by essenzhang
-       struct timeval now;
-	
+	struct timespec now;
 	ssize_t ret = 0;
 
-	//now = current_kernel_time();//modified by essenzhang
-       do_gettimeofday(&now); 
-      
-	long threadtime = getThreadMsec();//add by jay
+	now = current_kernel_time();
 
 	header.pid = current->tgid;
 	header.tid = current->pid;
-	//header.sec = now.tv_sec;
-	//header.nsec = now.tv_nsec;//modified by essenzhang
-       header.sec = now.tv_sec;
-	header.nsec = now.tv_usec*1000;
-       
-	header.thread_msec = threadtime;//add by jay
+	header.sec = now.tv_sec;
+	header.nsec = now.tv_nsec;
 	header.len = min_t(size_t, iocb->ki_left, LOGGER_ENTRY_MAX_PAYLOAD);
 
 	/* null writes succeed, return zero */
@@ -401,7 +379,7 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	return ret;
 }
 
-static struct logger_log * get_log_from_minor(int);
+static struct logger_log *get_log_from_minor(int);
 
 /*
  * logger_open - the log's open() file operation
@@ -541,7 +519,7 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
-static struct file_operations logger_fops = {
+static const struct file_operations logger_fops = {
 	.owner = THIS_MODULE,
 	.read = logger_read,
 	.aio_write = logger_aio_write,
@@ -575,11 +553,11 @@ static struct logger_log VAR = { \
 	.size = SIZE, \
 };
 
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 64*1024)
 DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
 DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 64*1024)
 
-static struct logger_log * get_log_from_minor(int minor)
+static struct logger_log *get_log_from_minor(int minor)
 {
 	if (log_main.misc.minor == minor)
 		return &log_main;

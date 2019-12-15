@@ -8,7 +8,6 @@
 #include <linux/writeback.h>
 #include <linux/sysctl.h>
 #include <linux/gfp.h>
-#include <linux/module.h> /*fan*/
 
 /* A global variable is a bit ugly, but it keeps the code simple */
 int sysctl_drop_caches;
@@ -54,12 +53,6 @@ restart:
 	spin_unlock(&sb_lock);
 }
 
-void wmt_drop_pagecache(void)
-{
-	drop_pagecache();
-}
-EXPORT_SYMBOL(wmt_drop_pagecache);
-
 static void drop_slab(void)
 {
 	int nr_objects;
@@ -68,12 +61,6 @@ static void drop_slab(void)
 		nr_objects = shrink_slab(1000, GFP_KERNEL, 1000);
 	} while (nr_objects > 10);
 }
-
-void wmt_drop_slab(void)
-{
-	drop_slab();
-}
-EXPORT_SYMBOL(wmt_drop_slab);
 
 int drop_caches_sysctl_handler(ctl_table *table, int write,
 	void __user *buffer, size_t *length, loff_t *ppos)

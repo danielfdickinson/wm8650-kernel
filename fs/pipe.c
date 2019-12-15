@@ -316,9 +316,7 @@ void generic_pipe_buf_release(struct pipe_inode_info *pipe,
 	page_cache_release(buf->page);
 }
 
-//static const struct pipe_buf_operations anon_pipe_buf_ops = {//add by jay
-const struct pipe_buf_operations anon_pipe_buf_ops = {
-
+static const struct pipe_buf_operations anon_pipe_buf_ops = {
 	.can_merge = 1,
 	.map = generic_pipe_buf_map,
 	.unmap = generic_pipe_buf_unmap,

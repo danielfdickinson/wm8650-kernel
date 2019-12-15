@@ -27,7 +27,6 @@ struct logger_entry {
 	__s32		tid;	/* generating process's tid */
 	__s32		sec;	/* seconds since Epoch */
 	__s32		nsec;	/* nanoseconds */
-	__s32       thread_msec;/*thread time ,add by jay*/
 	char		msg[0];	/* the entry's payload */
 };
 

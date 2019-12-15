@@ -837,6 +837,7 @@ static long hiddev_compat_ioctl(struct file *file, unsigned int cmd, unsigned lo
 	return hiddev_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
 }
 #endif
+
 static const struct file_operations hiddev_fops = {
 	.owner =	THIS_MODULE,
 	.read =		hiddev_read,
