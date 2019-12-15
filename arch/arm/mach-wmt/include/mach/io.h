@@ -21,7 +21,6 @@
 #define __ASM_ARCH_IO_H
 
 #define IO_SPACE_LIMIT 0xffffffff
-#include <mach/hardware.h>
 /*#define PCIO_BASE               0*/
 
 /*
