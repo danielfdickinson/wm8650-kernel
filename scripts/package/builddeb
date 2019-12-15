@@ -282,6 +282,9 @@ postrm)
 		rm -f /boot/${KBUILD_IMAGE}-${KERNELRELEASE} || {
 			echo "Failed to purge old kernel from /boot '${KBUILD_IMAGE}-${KERNELRELEASE}'"
 		}
+		if [ -n "${2}" ]; then
+			remove_depmod_files "\${2%%~*}" || exit 1
+		fi
 		;;
 	upgrade)
 		if [ -z "\$2" ]; then
