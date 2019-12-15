@@ -214,7 +214,9 @@ static inline void shmem_unacct_blocks(unsigned long flags, long pages)
 
 static const struct super_operations shmem_ops;
 static const struct address_space_operations shmem_aops;
-static const struct file_operations shmem_file_operations;
+//static const struct file_operations shmem_file_operations;
+const struct file_operations shmem_file_operations;//add by jay
+
 static const struct inode_operations shmem_inode_operations;
 static const struct inode_operations shmem_dir_inode_operations;
 static const struct inode_operations shmem_special_inode_operations;
@@ -2424,7 +2426,9 @@ static const struct address_space_operations shmem_aops = {
 	.error_remove_page = generic_error_remove_page,
 };
 
-static const struct file_operations shmem_file_operations = {
+//static const struct file_operations shmem_file_operations = {
+const struct file_operations shmem_file_operations = {
+
 	.mmap		= shmem_mmap,
 #ifdef CONFIG_TMPFS
 	.llseek		= generic_file_llseek,
@@ -2674,6 +2678,14 @@ put_memory:
 }
 EXPORT_SYMBOL_GPL(shmem_file_setup);
 
+void shmem_set_file(struct vm_area_struct *vma, struct file *file)
+{
+	if (vma->vm_file)
+		fput(vma->vm_file);
+	vma->vm_file = file;
+	vma->vm_ops = &shmem_vm_ops;
+}
+
 /**
  * shmem_zero_setup - setup a shared anonymous mapping
  * @vma: the vma to be mmapped is prepared by do_mmap_pgoff
@@ -2686,10 +2698,6 @@ int shmem_zero_setup(struct vm_area_struct *vma)
 	file = shmem_file_setup("dev/zero", size, vma->vm_flags);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
-
-	if (vma->vm_file)
-		fput(vma->vm_file);
-	vma->vm_file = file;
-	vma->vm_ops = &shmem_vm_ops;
+	shmem_set_file(vma, file);
 	return 0;
 }
