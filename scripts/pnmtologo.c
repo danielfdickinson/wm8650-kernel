@@ -244,7 +244,7 @@ static void write_header(void)
 static void write_footer(void)
 {
     fputs("\n};\n\n", out);
-    fprintf(out, "const struct linux_logo %s __initconst = {\n", logoname);
+    fprintf(out, "const struct linux_logo %s = {\n", logoname);
     fprintf(out, "\t.type\t\t= %s,\n", logo_types[logo_type]);
     fprintf(out, "\t.width\t\t= %d,\n", logo_width);
     fprintf(out, "\t.height\t\t= %d,\n", logo_height);
