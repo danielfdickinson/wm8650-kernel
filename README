@@ -1,3 +1,49 @@
+MODIFIED LINUX KERNEL (2.6.xx)
+
+This repository contains a modified version of the 2.6.32.9 version
+of the Linux kernel (see below for original kernel README).
+
+This kernel was initially populated with the 2.6.32 release of the
+torvalds/linux tree. It was then synced with the 2.6.32.9 release
+tarball (since I could not find a tag in the Linux tree for the
+point release).
+
+After that the changes from 2.6.32.9 to produce the Android kernel
+Android Version ID : 1112091453 (Linux Kernel ANDROID_2.6.32 2011-12-09)
+were aproximately added (only approximately as I could not find that
+specific Android release, so the approximate Android release comes
+from editing the patch the WM8650 GPL compliance tarball on top
+2.6.32.9 Linux kernel and removing the bits presumed to have been
+added by the WM8650 WonderMedia ODM on top of the Android release.
+
+After that the WM8650 bits were added as a single patch.
+
+After that patching the resulting kernel for some fixes and in order
+to use newer Debian userland than would work out of the box with a
+2.6.32.9 kernel was done.
+
+As much of possible of the Android specific patches were eventually
+removed and only those bits of Android required by the binary only
+drivers in the WM8650 GPL release were kept.
+
+Additional patching was done and one systemd based release of Debian
+has been used with this kernel.
+
+The plan is to incorporate patches from CentOS 6 2.6.x.x kernel in
+hopes of enabling the use of a more recent Debian version with the
+kernel.
+
+Other avenues that may be explored are the building of a version of
+Angström Linux, straight Yocto/OpenEmbedded, Alpine Linux, or other
+system amenable to use with the available kernel (needed for the
+proprietary drivers) even if it means a great deal of compiling.
+
+---
+
+Original Kernel README follows
+
+---
+
 	Linux kernel release 2.6.xx <http://kernel.org/>
 
 These are the release notes for Linux version 2.6.  Read them carefully,
